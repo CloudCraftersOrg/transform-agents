@@ -1,0 +1,24 @@
+global_config:
+  homeRegion: us-east-1
+  enabledRegions:
+    - us-east-1
+  controlTower:
+    enable: false
+
+accounts_config:
+  mandatoryAccounts:
+    - name: Management
+      email: aws+mgmt@example.com
+    - name: LogArchive
+      email: aws+logs@example.com
+    - name: Audit
+      email: aws+audit@example.com
+
+security_config:
+  guardduty: { enable: false }
+  macie: { enable: false }
+  securityHub: { enable: false }
+  accessAnalyzer: { enable: false }
+  awsConfig:
+    enableConfigurationRecorder: false
+    ruleSets: []

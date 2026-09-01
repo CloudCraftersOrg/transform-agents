@@ -1,0 +1,24 @@
+{"id": "interpret-business-case", "prompt": "Need to interpret the business case prose and derive the decision contract.", "expected_tool": "delegate_interpreter"}
+{"id": "lza-config-missing", "prompt": "Wave w1 is in INTERPRETING and the LZA config does not exist yet.", "expected_tool": "delegate_interpreter"}
+{"id": "lza-regen-after-validator", "prompt": "The LZA validator rejected the generated config; it needs to be fixed and retried.", "expected_tool": "delegate_interpreter"}
+{"id": "iac-fargate-artifact", "prompt": "Still need to generate the Fargate IaC artifact for the web tier's modernization scenario.", "expected_tool": "delegate_interpreter"}
+{"id": "mgn-stalled", "prompt": "A source server has been stuck in stalled state in MGN for 3 hours.", "expected_tool": "delegate_remediation"}
+{"id": "replication-checksum-mismatch", "prompt": "MGN replication reports a checksum mismatch on a volume.", "expected_tool": "delegate_remediation"}
+{"id": "pipeline-access-denied", "prompt": "The test pipeline failed with AccessDenied while assuming the target role.", "expected_tool": "delegate_remediation"}
+{"id": "check-policy-before-sizing", "prompt": "About to recommend t3.large for the app; check it against the contract before locking it in.", "expected_tool": "evaluate_policy"}
+{"id": "client-asks-graviton-everywhere", "prompt": "The client is asking to move the whole stack to Graviton; need to check if that's possible.", "expected_tool": "evaluate_policy"}
+{"id": "confirm-budget-before-commit", "prompt": "The proposed sizing yields an estimated run-rate; confirm it falls within the ceiling and variance.", "expected_tool": "evaluate_policy"}
+{"id": "wave-replication-progress", "prompt": "Need to know how many servers in the wave have finished replicating.", "expected_tool": "wave_status"}
+{"id": "apps-ready-for-test", "prompt": "How many apps in wave w2 are already ready to launch tests.", "expected_tool": "wave_status"}
+{"id": "lza-validated-launch-replication", "prompt": "The LZA config passed the validator; time to launch replication.", "expected_tool": "execute_step"}
+{"id": "qa-green-advance-parity", "prompt": "Validation QA came back green; advance the wave to the parity check.", "expected_tool": "execute_step"}
+{"id": "cutover-now-config-ready", "prompt": "Everything is ready and approved; trigger the billing cutover.", "expected_tool": "execute_step"}
+{"id": "modernize-hack", "prompt": "The client is asking to modernize the app's Hack code with Transform.", "expected_tool": "escalate"}
+{"id": "interpreter-exhausted-iterations", "prompt": "The Interpreter made 5 attempts at the LZA config and none passed the validator.", "expected_tool": "escalate"}
+{"id": "approve-derived-contract", "prompt": "Before dispatching the wave, a human needs to approve the derived contract.", "expected_tool": "submit_hitl_task"}
+{"id": "mode1-human-approval-gate", "prompt": "We're in assisted mode 1: a human must approve before the agent dispatches.", "expected_tool": "submit_hitl_task"}
+{"id": "finops-run-rate-drift", "prompt": "The post-cutover run-rate is 22% above the baseline.", "expected_tool": "delegate_finops"}
+{"id": "untagged-cost-not-attributable", "prompt": "EC2 and EBS are untagged and the spend is not attributable by component.", "expected_tool": "delegate_finops"}
+{"id": "parity-red-verdict", "prompt": "The post-cutover parity test came back red; need to decide what to test.", "expected_tool": "delegate_validation"}
+{"id": "decide-test-set-for-cutover", "prompt": "Need to decide the test set for the cutover based on billing's criticality.", "expected_tool": "delegate_validation"}
+{"id": "api-diff-three-new-fields", "prompt": "An api_diff showed 3 new fields in the response; decide whether they matter.", "expected_tool": "delegate_validation"}

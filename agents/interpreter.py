@@ -1,0 +1,41 @@
+from __future__ import annotations
+
+from agents.model import ModelLike, strip_code_fence
+from agents.trust import ConvergeResult, converge
+from tools.validators import validate_lza_config
+
+SYSTEM_PROMPT = (
+    "You are the Interpreter. You generate valid configuration (LZA, IaC) from an ambiguous "
+    "source. You never hand off anything that hasn't passed the deterministic validator. Once "
+    "the iteration budget is exhausted, you escalate with a diagnosis instead of failing silently."
+)
+
+TOOLS = ["read_spec", "read_transform_artifact", "query_kb", "validate_lza_config", "validate_iac"]
+
+
+def _prompt(objective: str, spec: str, errors: list[str]) -> str:
+    parts = [f"OBJECTIVE: {objective}"]
+    if spec:
+        parts.append(f"SPECIFICATION:\n{spec}")
+    if errors:
+        parts.append(f"The validator rejected the previous attempt: {errors[-1]}\nFix it.")
+    parts.append("Return only the config: global_config, accounts_config and security_config.")
+    return "\n\n".join(parts)
+
+
+def generate_lza_config(
+    objective: str, model: ModelLike, *, spec: str = "", max_iter: int = 5
+) -> ConvergeResult:
+    def generate(errors: list[str]) -> str:
+        return strip_code_fence(model.complete(_prompt(objective, spec, errors), system=SYSTEM_PROMPT))
+
+    return converge(generate, validate_lza_config, max_iter=max_iter)
+
+
+def build_interpreter(model: ModelLike):
+    """agent-as-tool wrapper for the Orchestrator. The Strands `@tool` variant lands in Sprint 2."""
+
+    def delegate_interpreter(objective: str, spec: str = "") -> ConvergeResult:
+        return generate_lza_config(objective, model, spec=spec)
+
+    return delegate_interpreter

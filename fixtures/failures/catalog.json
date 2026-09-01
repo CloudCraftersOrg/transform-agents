@@ -1,0 +1,33 @@
+{
+  "note": "Injected failures for the fault-injection phase. `text` is what Remediation sees; `root_cause` and `expected_action` are ground truth for the scorecard's diagnosis-precision metric. `expected_action` values are from contract.allowed_actions, or `escalate` when the tool does not cover the case.",
+  "failures": [
+    {
+      "id": "f1",
+      "inject": "kill the MGN replication agent on the web tier",
+      "text": "source server i-0422e26203cb709b2: dataReplicationState STALLED, lastSeenByServiceDateTime 40m ago",
+      "root_cause": "replication agent process crashed on the source host",
+      "expected_action": "restart_replication_agent"
+    },
+    {
+      "id": "f2",
+      "inject": "corrupt a block during transfer",
+      "text": "MGN replication reports checksum mismatch on volume vol-0a1b2c3d for i-0d6b944117ba6302b",
+      "root_cause": "corrupted block written during the initial sync",
+      "expected_action": "resync_volume"
+    },
+    {
+      "id": "f3",
+      "inject": "throttle the replication network path",
+      "text": "source server i-0d6b944117ba6302b: backlog growing, dataReplicationState CONTINUOUS but etaDateTime slipping 6h",
+      "root_cause": "default replication timeout too tight for the throttled link",
+      "expected_action": "increase_replication_timeout"
+    },
+    {
+      "id": "f4",
+      "inject": "revoke a permission on the MGN target instance role",
+      "text": "test pipeline failed: AccessDenied assuming arn:aws:iam::111122223333:role/mgn-target-instance",
+      "root_cause": "the target instance role trust policy or permissions were changed outside the wave",
+      "expected_action": "escalate"
+    }
+  ]
+}

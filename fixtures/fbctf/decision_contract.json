@@ -1,0 +1,51 @@
+{
+  "case_id": "fbctf-001",
+  "source_ref": "s3://transform-agents-dev/fbctf/business-case.pdf",
+  "budget": { "ceiling_monthly_usd": 190, "basis": "as_is_run_rate", "max_variance_pct": 15 },
+  "constraints": [
+    {
+      "id": "c1",
+      "subject": "i-0d6b944117ba6302b",
+      "predicate": "arch_not_allowed",
+      "value": "arm64",
+      "source": "HHVM 3.21 has no ARM64 build"
+    },
+    {
+      "id": "c2",
+      "subject": "*",
+      "predicate": "min_vcpu",
+      "value": 2,
+      "source": "do not recommend below 2 vCPU / 2 GiB"
+    },
+    {
+      "id": "c3",
+      "subject": "fbctf-app",
+      "predicate": "modernization_unsupported",
+      "value": "hack",
+      "source": "Transform code modernization does not cover PHP/Hack"
+    },
+    {
+      "id": "c4",
+      "subject": "*",
+      "predicate": "min_ram_gib",
+      "value": 2,
+      "source": "do not recommend below 2 vCPU / 2 GiB"
+    },
+    {
+      "id": "c5",
+      "subject": "*",
+      "predicate": "sizing_basis",
+      "value": "peak_with_headroom",
+      "source": "size on peak with headroom, not average utilization"
+    }
+  ],
+  "scope": { "excluded": [] },
+  "steps": ["precheck", "interpret", "replicate", "test", "cutover", "parity", "finops"],
+  "feature_flags": { "lza_enabled": false },
+  "allowed_actions": [
+    "restart_replication_agent",
+    "resync_volume",
+    "increase_replication_timeout",
+    "reinstall_mgn_agent"
+  ]
+}
