@@ -275,11 +275,14 @@ resource "aws_budgets_budget" "monthly" {
   limit_unit   = "USD"
   time_unit    = "MONTHLY"
 
-  notification {
-    comparison_operator        = "GREATER_THAN"
-    threshold                  = 50
-    threshold_type             = "PERCENTAGE"
-    notification_type          = "ACTUAL"
-    subscriber_email_addresses = []
+  dynamic "notification" {
+    for_each = var.budget_alert_email == "" ? [] : [1]
+    content {
+      comparison_operator        = "GREATER_THAN"
+      threshold                  = 50
+      threshold_type             = "PERCENTAGE"
+      notification_type          = "ACTUAL"
+      subscriber_email_addresses = [var.budget_alert_email]
+    }
   }
 }

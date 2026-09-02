@@ -1,0 +1,13 @@
+.venv/
+.git/
+.pytest_cache/
+.ruff_cache/
+build_lambda/
+step-dispatcher.zip
+terraform/.terraform/
+terraform/tfplan
+terraform/*.tfplan
+**/__pycache__/
+*.pyc
+.coverage
+htmlcov/

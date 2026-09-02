@@ -34,3 +34,9 @@ variable "lambda_runtime" {
   type    = string
   default = "python3.12"
 }
+
+variable "budget_alert_email" {
+  type        = string
+  description = "Email for the monthly budget alert; empty disables the notification"
+  default     = ""
+}

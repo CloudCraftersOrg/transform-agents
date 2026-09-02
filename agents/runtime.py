@@ -5,7 +5,7 @@ import os
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from agents.model import StrandsModel
+from agents.model import BedrockModel
 from agents.orchestrator import WaveInputs, build_orchestrator
 from dispatcher.handler import build_lambda_dispatcher
 from dispatcher.steps import DynamoDbLedger, LambdaInvokingDispatcher
@@ -31,8 +31,8 @@ def _build(contract: DecisionContract):
     store = DynamoDbStateStore(
         os.environ["WAVE_STATE_TABLE"], os.environ["DECISION_LOG_TABLE"]
     )
-    model = StrandsModel(
-        os.environ.get("ORCHESTRATOR_MODEL_ID", "us.amazon.nova-lite-v1:0"),
+    model = BedrockModel(
+        os.environ.get("ORCHESTRATOR_MODEL_ID", "amazon.nova-lite-v1:0"),
         region=os.environ.get("AWS_REGION", "us-east-1"),
         guardrail_id=os.environ.get("BEDROCK_GUARDRAIL_ID"),
     )

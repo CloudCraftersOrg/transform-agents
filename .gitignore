@@ -16,3 +16,7 @@ build/
 terraform/.terraform/
 terraform/*.tfstate
 terraform/*.tfstate.*
+terraform/tfplan
+terraform/*.tfplan
+terraform/crash.log
+terraform/crash.*.log
