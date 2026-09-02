@@ -106,6 +106,49 @@ def test_rejected_contract_escalates():
     assert orq.run_wave("w1", require_contract_approval=True) is WaveOutcome.ESCALATED
 
 
+_VALID_IAC = """
+resource "aws_ecr_repository" "app" { name = "svc" }
+resource "aws_ecs_task_definition" "app" {
+  family                = "svc"
+  container_definitions = "[{\\"image\\":\\"svc:latest\\"}]"
+}
+resource "aws_ecs_service" "app" { name = "svc" cluster = "prod" }
+"""
+
+
+def test_wave_generates_a_verified_modernization_artifact():
+    def respond(prompt: str) -> str:
+        if '"verdict"' in prompt:
+            return '{"verdict":"green","reasons":[]}'
+        if "Terraform HCL" in prompt:
+            return _VALID_IAC
+        return VALID_LZA
+
+    orq, store = _orq(FakeModel(respond))
+    out = orq.run_wave(
+        "w1", WaveInputs(finops_resources=TAGGED_CHEAP, modernization_target="container")
+    )
+    assert out is WaveOutcome.DONE
+    arts = [e for e in store.decisions("w1") if e.kind == "modernization_artifact"]
+    assert len(arts) == 1 and arts[0].detail["verified"] is True and arts[0].detail["iac"]
+
+
+def test_wave_reports_when_the_target_cannot_be_modernized():
+    orq, store = _orq(_model())
+    out = orq.run_wave(
+        "w1",
+        WaveInputs(
+            finops_resources=TAGGED_CHEAP,
+            modernization_target="hack",
+            modernization_subject="fbctf-app",
+        ),
+    )
+    assert out is WaveOutcome.DONE  # lift-and-shift still completes
+    kinds = [e.kind for e in store.decisions("w1")]
+    assert "escalation" in kinds  # deliverable 5: "Transform can't modernize this"
+    assert not any(e.kind == "modernization_artifact" for e in store.decisions("w1"))
+
+
 def test_server_side_step_rejection_escalates_not_crashes(monkeypatch):
     from dispatcher.steps import StepRejected
 

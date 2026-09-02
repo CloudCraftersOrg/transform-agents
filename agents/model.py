@@ -57,6 +57,49 @@ class StrandsModel:
         return str(self._agent(system or "")(prompt))
 
 
+class BedrockModel:
+    """Adapter over the bedrock-runtime Converse API. No strands dependency; pass a client to test."""
+
+    def __init__(
+        self,
+        model_id: str,
+        region: str = "us-east-1",
+        *,
+        guardrail_id: str | None = None,
+        max_tokens: int = 2048,
+        client=None,
+    ) -> None:
+        self._model_id = model_id
+        self._region = region
+        self._guardrail_id = guardrail_id
+        self._max_tokens = max_tokens
+        self._client = client
+
+    @property
+    def client(self):
+        if self._client is None:
+            import boto3
+
+            self._client = boto3.client("bedrock-runtime", region_name=self._region)
+        return self._client
+
+    def complete(self, prompt: str, *, system: str | None = None) -> str:
+        kwargs: dict = {
+            "modelId": self._model_id,
+            "messages": [{"role": "user", "content": [{"text": prompt}]}],
+            "inferenceConfig": {"maxTokens": self._max_tokens, "temperature": 0},
+        }
+        if system:
+            kwargs["system"] = [{"text": system}]
+        if self._guardrail_id:
+            kwargs["guardrailConfig"] = {
+                "guardrailIdentifier": self._guardrail_id,
+                "guardrailVersion": "DRAFT",
+            }
+        resp = self.client.converse(**kwargs)
+        return resp["output"]["message"]["content"][0]["text"]
+
+
 def strip_code_fence(text: str) -> str:
     m = re.match(r"^```[a-zA-Z0-9]*\s*(.*?)\s*```$", text.strip(), re.DOTALL)
     return m.group(1).strip() if m else text.strip()

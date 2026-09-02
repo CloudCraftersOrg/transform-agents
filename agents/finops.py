@@ -36,7 +36,7 @@ def evaluate_deviation(
             True, 0.0, baseline, 0.0, unattributable=True,
             notes=["no launched resources reported; run-rate not computed"],
         )
-    actual = monthly_run_rate(launched_resources)
+    actual = monthly_run_rate(launched_resources, pricing_model=contract.budget.pricing_model)
     variance = round((actual - baseline) / baseline * 100, 1) if baseline else 0.0
 
     if actual <= contract.budget.ceiling_with_variance:

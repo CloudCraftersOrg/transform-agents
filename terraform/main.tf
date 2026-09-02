@@ -1,10 +1,18 @@
 terraform {
-  required_version = ">= 1.6"
+  required_version = ">= 1.10"
   required_providers {
     aws = {
       source  = "hashicorp/aws"
       version = ">= 5.40"
     }
+  }
+
+  backend "s3" {
+    bucket       = "transform-agents-tfstate"
+    key          = "poc/terraform.tfstate"
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true
   }
 }
 

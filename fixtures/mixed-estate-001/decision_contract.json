@@ -1,0 +1,35 @@
+{
+  "case_id": "mixed-estate-001",
+  "source_ref": "transform-assessment/Initial_Migration_Assessment_20260902_161429.zip",
+  "budget": {
+    "ceiling_monthly_usd": 587,
+    "basis": "transform_3yr_ri_provisional",
+    "pricing_model": "3yr_ri",
+    "max_variance_pct": 20
+  },
+  "constraints": [
+    {
+      "id": "c1",
+      "subject": "*",
+      "predicate": "sizing_basis",
+      "value": "peak_with_headroom",
+      "source": "Right-sizing applied: actual peak utilization from inventory data (avg 90% CPU, 36% memory)"
+    },
+    {
+      "id": "c2",
+      "subject": "EC2AMAZ-HVB61P6",
+      "predicate": "out_of_scope",
+      "value": "unidentified",
+      "source": "discovery: EC2AMAZ-HVB61P6 runs at 100% CPU with no application process captured - workload unidentified"
+    }
+  ],
+  "scope": { "excluded": [] },
+  "steps": ["precheck", "interpret", "replicate", "test", "cutover", "parity", "finops"],
+  "feature_flags": { "lza_enabled": false },
+  "allowed_actions": [
+    "restart_replication_agent",
+    "resync_volume",
+    "increase_replication_timeout",
+    "reinstall_mgn_agent"
+  ]
+}

@@ -72,6 +72,26 @@ a check that every constraint has a non-empty `source`; it returns `(ConvergeRes
 only programmed human gate is approving that derived contract. Prose fixture with the 3 traps:
 [`fixtures/fbctf/business_case.md`](fixtures/fbctf/business_case.md).
 
+`tools/transform_ingest.py::load_business_case(zip_or_dir)` flattens whatever the estate produced
+into the prose blob `extract_contract` takes, auto-detecting the format:
+- a **Transform assessment** (PPTX + XLSX + PDF, no JSON) — XLSX + FSx sheets for the per-resource
+  numbers, the PDF **Financial Summary** for the authoritative compute+network+storage cost basis
+  (Business Support excluded), PDF prose for the narrative.
+  [`fixtures/vmware-001/`](fixtures/vmware-001/) (2 Ubuntu 16.04 servers, `c7a.medium`, 3-Year RI,
+  $43/month) and [`fixtures/mixed-estate-001/`](fixtures/mixed-estate-001/) (12 servers, 10 Linux +
+  2 Windows, `c5a.large`, EBS + one FSx, 3-Year RI **$587/month**; every server flagged
+  "vCPU spec missing" so the contract's `budget.basis` is `transform_3yr_ri_provisional`).
+- a **discovery-tool export** (the CSV bundle you upload to Transform) — server inventory,
+  performance, process/app detection, dependency edges, DB inventory. This carries the app and
+  dependency detail a Transform assessment doesn't.
+  [`fixtures/discovery-001/`](fixtures/discovery-001/) is the **same 12-server estate** as
+  `mixed-estate-001`, from the discovery side (Java services, Redis, Oracle XE, SQL Server, the
+  Java→Oracle and Apache→SQL Server dependency edges, and the unidentified 100%-CPU Windows box the
+  contract puts `out_of_scope`).
+
+Per the plan the discovery CSV is another team's deliverable, but a business case is "free-form", so
+the ingest reads both.
+
 **Closed predicate vocabulary, open constraints.** `tools/spec.py::PREDICATES`:
 `min_vcpu`, `min_ram_gib`, `arch_not_allowed`, `modernization_unsupported`, `blackout_window`,
 `out_of_scope`, `sizing_basis`. How many constraints there are and which resources they target comes
@@ -138,13 +158,24 @@ policy → `ESCALATED`. `require_contract_approval=True` = **mode 1** (HITL gate
 contract before dispatching); `False` = autonomous **mode 2**. `python -m evals.wave_demo` runs a
 mode-2 wave with fakes and prints the `decision_log`.
 
+**Two approaches in one wave (deliverable 1).** The lift-and-shift path is *executed* (MGN
+replicate → cutover). If `WaveInputs.modernization_target` is set, `interpret` also produces the
+**modernization scenario as a verified IaC artifact that is never applied** — the Interpreter
+generates container Terraform, `validate_iac` checks it, and it's written to the `decision_log`
+(`kind="modernization_artifact"`, `verified: bool`). If policy says the target can't be modernized
+(`modernization_unsupported`, e.g. Transform doesn't cover PHP/Hack), the escalation `check` writes
+*is* the output (**deliverable 5**: "here is what cannot be modernized") and the rehost still runs.
+
 ## Thin specialists
 
 Judgment lives in the model, execution lives in deterministic tools. Each one exposes a typed
 function and a `build_*` that returns the `delegate_*(objective: str)` callable, with `objective` as
 JSON (decoupled PoC).
 
-- **Interpreter** — `agents/interpreter.py::generate_lza_config` (see above).
+- **Interpreter** — `agents/interpreter.py::generate_lza_config` (rehost/LZA config) and
+  `generate_modernization_iac` (the container scenario). Both are `converge` loops; the second's
+  oracle is `validate_iac` (`terraform validate` if the binary is present, else an offline
+  structural HCL check for a container compute target + image source).
 - **Validation QA** — `agents/validation.py::issue_verdict(model, spec, diffs, criticality,
   request_rollback=...)`. The model decides whether a diff matters and issues a `Verdict(ok, reasons)`;
   on doubt or an illegible verdict → **red** (false green = zero target). On red it calls
@@ -152,7 +183,9 @@ JSON (decoupled PoC).
   `schema_diff` (real added/removed/changed), `playwright_run` (stub).
 - **FinOps** — `agents/finops.py::evaluate_deviation(model, contract, launched_resources)`. The
   pass/fail check against `budget.ceiling_with_variance` is arithmetic
-  (`tools/finops.py::monthly_run_rate` with a price table). The model only steps in to **attribute**
+  (`tools/finops.py::monthly_run_rate` — uses a per-resource `monthly_usd` from Transform when it's
+  there, otherwise a small price table with a directional Reserved-Instance discount keyed on
+  `budget.pricing_model`). The model only steps in to **attribute**
   a deviation; if resources are untagged or the attribution is illegible →
   `Finding(unattributable=True)`, it never fabricates a cause.
 - **Remediation** — `agents/remediation.py::remediate(model, failure, allowed_actions, apply_action,
@@ -242,28 +275,37 @@ option exists. There is no `if lza_enabled` anywhere in any prompt.
 agents/       trust (converge), model (ModelLike + Fake/Strands), extraction, interpreter,
               orchestrator (route + the Orchestrator class), remediation, validation, finops,
               runtime (AgentCore HTTP entry: POST /invocations, GET /ping)
-tools/        spec, policy (pure engine), validators (LZA oracle), qa (diffs), finops (run-rate),
-              runbooks (learning KB), escalation, hitl, aws (MGN/logs/SSM), transform_mcp (stdio + Gateway)
+tools/        spec, policy (pure engine), validators (LZA + IaC oracles), qa (diffs),
+              finops (run-rate), runbooks (learning KB), escalation, hitl, aws (MGN/logs/SSM),
+              transform_mcp (stdio + Gateway),
+              transform_ingest (Transform assessment PPTX/XLSX/PDF + discovery CSVs -> prose)
 state/        models, transitions (legal table), store (in-memory + DynamoDB)
 dispatcher/   steps — deterministic executor, idempotent (swappable ledger), re-evaluates policy;
               handler — the Lambda entry + real wave step functions (MGN, Route53)
-fixtures/     fbctf/{decision_contract.json, business_case.md}, lza/valid_config.yaml, failures/catalog.json
+fixtures/     fbctf/ (synthetic), vmware-001/ + mixed-estate-001/ (real Transform assessments),
+              discovery-001/ (real discovery export, same estate as mixed-estate-001),
+              lza/valid_config.yaml, failures/catalog.json
 evals/        bakeoff/ (cases.jsonl + run.py), scorecard.py (autonomy metrics), wave_demo.py
-              (wave + learning loop + scorecard); golden tests live under tests/
-infra/        main.tf / variables.tf / outputs.tf — DynamoDB, Guardrail, step-dispatcher Lambda +
-              split IAM roles, EventBridge Scheduler, Budget (not applied)
-tests/        146 tests, all offline (FakeModel for the LLM, moto for DynamoDB, fake clients for
-              MGN/Route53/SSM/Lambda)
+              (rehost + modernization + learning loop + scorecard); golden tests live under tests/
+terraform/    main.tf / variables.tf / outputs.tf — DynamoDB, Guardrail, step-dispatcher Lambda +
+              split IAM roles, EventBridge Scheduler, Budget. S3 backend: transform-agents-tfstate
+tests/        181 tests, all offline (FakeModel for the LLM, moto for DynamoDB, fake clients for
+              MGN/Route53/SSM/Lambda, synthetic workbooks/CSVs for the ingest)
 ```
 
 ## Current state
 
 **Implemented and tested offline** (`FakeModel` for the LLM, `moto` for DynamoDB, fake boto3 clients
 for MGN/Route53/SSM/logs): the entire decision path — typed contract + loader, closed vocabulary,
-policy engine + traps, state machine, `converge` Trust loop, `validate_lza_config` oracle,
-`escalate` + HITL queue, extraction `business_case → DecisionContract`, Interpreter
-(`generate_lza_config`), Orchestrator (`route` + resumable mode-1/2 `run_wave`, no AWS APIs), all
-five roster agents, Remediation's **learning loop**, the **autonomy scorecard** (incl.
+policy engine + traps, state machine, `converge` Trust loop, `validate_lza_config` +
+`validate_iac` oracles, `escalate` + HITL queue, ingest of both a Transform assessment and a
+discovery export, with the PDF Financial Summary as the authoritative cost basis (`transform_ingest`)
++ extraction `business_case → DecisionContract` (fixtures: synthetic FBCTF; real `vmware-001`,
+`mixed-estate-001`, `discovery-001`), Interpreter (`generate_lza_config`
+for rehost + `generate_modernization_iac` for the verified container artifact),
+Orchestrator (`route` + resumable mode-1/2 `run_wave` producing both approaches in one wave, no AWS APIs), all
+five roster agents, Remediation's **learning loop**, FinOps aligned to Transform's cost basis
+(per-resource `monthly_usd` + RI-aware run-rate), the **autonomy scorecard** (incl.
 `diagnosis_precision` over the injected-failure catalog), bake-off (24 cases + `score`).
 
 **Connective layer — written and tested with mocks, needs credentials to run for real:**
@@ -276,10 +318,11 @@ shell + resumable `invoke`, wired to either the Lambda (`STEP_DISPATCHER_FUNCTIO
 steps, `StrandsModel` (Bedrock, agent cache + guardrail id), `tools/transform_mcp.py` (stdio +
 AgentCore Gateway paths), `infra/*.tf`.
 
-**Still open (shape only knowable against credentials):** exact AWS Transform MCP tool schemas and
-the real MGN payloads — the wrappers are built against the documented APIs and adjust on first real
-response. Also pending real infra: `terraform apply`, `agentcore configure/launch`, the S3 Vectors
-Knowledge Base, `validate_iac` (needs the `terraform` binary), `playwright_run`, and wiring
+**Still open (shape only knowable against credentials):** exact AWS Transform *MCP* tool schemas
+(the file ingest handles the console export; MCP may return the same data structured) and the real
+MGN payloads — the wrappers are built against the documented APIs and adjust on first real response.
+Also pending real infra: `terraform apply`, `agentcore configure/launch`, the S3 Vectors Knowledge
+Base, `validate_iac` (needs the `terraform` binary), `playwright_run`, and wiring
 Remediation's `apply_action` to `ssm_run_command`.
 
 **Next:** the experiment itself — runs in the three modes (baseline / assisted / autonomous),
@@ -296,6 +339,8 @@ uv run python -m evals.wave_demo
 
 - **Live models** — `uv sync --extra agents`, then `evals/bakeoff/run.py --model bedrock:<id>` and
   `diagnosis_precision(StrandsModel(...), contract)`.
-- **Infra** — `cd infra && terraform apply -var business_case_bucket=<bucket>`, then
-  `agentcore configure` / `agentcore launch` against `Dockerfile` + `agents/runtime.py`, passing the
-  `terraform output` values as env.
+- **Infra** — `cd terraform && terraform init` (S3 backend `transform-agents-tfstate`, key
+  `poc/terraform.tfstate`, S3-native lock), then
+  `terraform apply -var business_case_bucket=<bucket>`, then `agentcore configure` /
+  `agentcore launch` against `Dockerfile` + `agents/runtime.py`, passing the `terraform output`
+  values as env.

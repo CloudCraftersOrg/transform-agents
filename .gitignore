@@ -11,3 +11,8 @@ htmlcov/
 .DS_Store
 dist/
 build/
+
+# terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*

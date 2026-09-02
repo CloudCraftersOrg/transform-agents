@@ -1,0 +1,42 @@
+{
+  "case_id": "vmware-001",
+  "source_ref": "transform-assessment/Initial_Migration_Assessment_20260901_191601.zip",
+  "budget": {
+    "ceiling_monthly_usd": 43,
+    "basis": "transform_recommendation",
+    "pricing_model": "3yr_ri",
+    "max_variance_pct": 20
+  },
+  "constraints": [
+    {
+      "id": "c1",
+      "subject": "*",
+      "predicate": "sizing_basis",
+      "value": "peak_with_headroom",
+      "source": "Right-sizing applied: actual peak utilization from inventory data (avg 48% CPU, 16% memory)"
+    },
+    {
+      "id": "c2",
+      "subject": "*",
+      "predicate": "min_vcpu",
+      "value": 1,
+      "source": "Successfully mapped 2 servers to EC2 instances; recommended c7a.medium (1 vCPU)"
+    },
+    {
+      "id": "c3",
+      "subject": "*",
+      "predicate": "min_ram_gib",
+      "value": 2,
+      "source": "EC2 RAM (GB): 2 for both servers (c7a.medium)"
+    }
+  ],
+  "scope": { "excluded": [] },
+  "steps": ["precheck", "interpret", "replicate", "test", "cutover", "parity", "finops"],
+  "feature_flags": { "lza_enabled": false },
+  "allowed_actions": [
+    "restart_replication_agent",
+    "resync_volume",
+    "increase_replication_timeout",
+    "reinstall_mgn_agent"
+  ]
+}

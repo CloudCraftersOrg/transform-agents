@@ -71,9 +71,9 @@ def main(argv: list[str] | None = None) -> int:
         print("--model must be bedrock:<model_id>")
         return 1
 
-    from agents.model import StrandsModel
+    from agents.model import BedrockModel
 
-    report = score(StrandsModel(args.model.split(":", 1)[1], args.region), cases)
+    report = score(BedrockModel(args.model.split(":", 1)[1], args.region, max_tokens=64), cases)
     print(f"accuracy {report.accuracy:.0%} ({report.correct}/{report.total})")
     for tool, (ok, tot) in sorted(report.by_tool.items()):
         print(f"  {tool:<22} {ok}/{tot}")

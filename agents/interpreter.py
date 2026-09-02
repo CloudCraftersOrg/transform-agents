@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from agents.model import ModelLike, strip_code_fence
 from agents.trust import ConvergeResult, converge
-from tools.validators import validate_lza_config
+from tools.validators import validate_iac, validate_lza_config
 
 SYSTEM_PROMPT = (
     "You are the Interpreter. You generate valid configuration (LZA, IaC) from an ambiguous "
@@ -30,6 +30,35 @@ def generate_lza_config(
         return strip_code_fence(model.complete(_prompt(objective, spec, errors), system=SYSTEM_PROMPT))
 
     return converge(generate, validate_lza_config, max_iter=max_iter)
+
+
+_MODERNIZATION_SYSTEM = (
+    "You are the Interpreter, generating the modernization scenario as a VERIFIED Terraform "
+    "artifact - it is never applied, only checked. Target: a container deployment (ECS/Fargate or "
+    "App Runner) with an ECR image source. Return only HCL."
+)
+
+
+def _iac_prompt(objective: str, spec: str, errors: list[str]) -> str:
+    parts = [f"OBJECTIVE: containerize - {objective}"]
+    if spec:
+        parts.append(f"SPECIFICATION:\n{spec}")
+    if errors:
+        parts.append(f"The IaC validator rejected the previous attempt: {errors[-1]}\nFix it.")
+    parts.append("Return only Terraform HCL for the container deployment.")
+    return "\n\n".join(parts)
+
+
+def generate_modernization_iac(
+    objective: str, model: ModelLike, *, spec: str = "", max_iter: int = 5
+) -> ConvergeResult:
+    """The modernization half of deliverable 1: a container-deployment IaC artifact, generated and
+    verified against `validate_iac`, never executed."""
+
+    def generate(errors: list[str]) -> str:
+        return strip_code_fence(model.complete(_iac_prompt(objective, spec, errors), system=_MODERNIZATION_SYSTEM))
+
+    return converge(generate, validate_iac, max_iter=max_iter)
 
 
 def build_interpreter(model: ModelLike):

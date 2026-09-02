@@ -68,6 +68,13 @@ reads the error and tries again, up to five times.
 - Passes the checker within five tries → move on.
 - Still failing after five → **escalate**, with a note on what went wrong.
 
+**Two approaches, one wave.** The migration itself is a *lift-and-shift* (copy the servers as they
+are — steps 3–7 below). If the assessment also asks for a *modernization* scenario, the Interpreter
+generates it here too — container infrastructure-as-code — and verifies it passes a checker. That
+artifact is **produced and checked but never deployed**; it's an option to hand to the team, not a
+second migration. And if the thing they want modernized is something AWS Transform can't handle
+(for example a PHP app), the system says so explicitly and the lift-and-shift still goes ahead.
+
 ### 3. Replicate
 The **step dispatcher** tells AWS MGN to start copying the servers. This takes **hours**. The system
 does not sit and wait — it returns "waiting" and stops. A scheduled trigger wakes it every five

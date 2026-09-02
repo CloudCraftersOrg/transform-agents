@@ -1,0 +1,42 @@
+{
+  "case_id": "discovery-001",
+  "source_ref": "discovery-export/discovery_tool_export.zip",
+  "budget": {
+    "ceiling_monthly_usd": 250,
+    "basis": "estimated_no_transform_costing",
+    "pricing_model": "3yr_ri",
+    "max_variance_pct": 25
+  },
+  "constraints": [
+    {
+      "id": "c1",
+      "subject": "*",
+      "predicate": "sizing_basis",
+      "value": "peak_with_headroom",
+      "source": "avg CPU ~20% but p95 95-100% across the estate - sizing on average would undersize"
+    },
+    {
+      "id": "c2",
+      "subject": "*",
+      "predicate": "min_ram_gib",
+      "value": 2,
+      "source": "SQL Server Express and Oracle XE both require >= 2 GiB; source hosts are 1.86 GiB"
+    },
+    {
+      "id": "c3",
+      "subject": "EC2AMAZ-HVB61P6",
+      "predicate": "out_of_scope",
+      "value": "unidentified",
+      "source": "sustained 100% CPU (p95 100%) with no application process captured - workload unidentified"
+    }
+  ],
+  "scope": { "excluded": [] },
+  "steps": ["precheck", "interpret", "replicate", "test", "cutover", "parity", "finops"],
+  "feature_flags": { "lza_enabled": false },
+  "allowed_actions": [
+    "restart_replication_agent",
+    "resync_volume",
+    "increase_replication_timeout",
+    "reinstall_mgn_agent"
+  ]
+}

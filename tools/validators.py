@@ -74,21 +74,45 @@ def validate_lza_config(doc: str | dict) -> ValidationOutcome:
     return ValidationOutcome(True)
 
 
-def validate_iac(workdir: str) -> ValidationOutcome:
-    """Oracle for the Interpreter's IaC output. Stub: `terraform validate` if it's on PATH.
-    Runs the resolved absolute path with a fixed argument list, never a shell."""
+# A verified modernization artifact must at least describe a container workload with an image source
+# and a compute target. Minimal structural check, same spirit as validate_lza_config.
+_CONTAINER_COMPUTE = ("aws_ecs_service", "aws_apprunner_service", "aws_ecs_task_definition")
+_IMAGE_SOURCE = ("aws_ecr_repository", "image")
+
+
+def validate_iac(source: str) -> ValidationOutcome:
+    """Oracle for the Interpreter's modernization IaC. If the `terraform` binary is on PATH and
+    `source` is a directory, run `terraform validate`; otherwise do an offline structural check of
+    the HCL text (parses, declares a container compute target, references an image)."""
     import shutil
     import subprocess
+    from pathlib import Path
 
     terraform = shutil.which("terraform")
-    if terraform is None:
-        return ValidationOutcome(False, "terraform is not on PATH")
-    p = subprocess.run(
-        [terraform, "validate", "-no-color"],
-        cwd=workdir,
-        capture_output=True,
-        text=True,
-        check=False,
-        shell=False,
-    )
-    return ValidationOutcome(p.returncode == 0, None if p.returncode == 0 else p.stderr.strip())
+    if terraform is not None and Path(source).is_dir():
+        p = subprocess.run(
+            [terraform, "validate", "-no-color"],
+            cwd=source, capture_output=True, text=True, check=False, shell=False,
+        )
+        return ValidationOutcome(p.returncode == 0, None if p.returncode == 0 else p.stderr.strip())
+
+    text = Path(source).read_text(encoding="utf-8") if Path(source).is_file() else source
+    try:
+        import hcl2
+
+        parsed = hcl2.loads(text)
+    except Exception as e:  # noqa: BLE001 - any HCL parse failure is a rejection
+        return ValidationOutcome(False, f"HCL does not parse: {e}")
+
+    # python-hcl2 keeps the literal quotes on block labels: {'"aws_ecs_service"': {...}}
+    resources = {
+        rtype.strip('"')
+        for block in parsed.get("resource", [])
+        if isinstance(block, dict)
+        for rtype in block
+    }
+    if not resources & set(_CONTAINER_COMPUTE):
+        return ValidationOutcome(False, f"no container compute target ({', '.join(_CONTAINER_COMPUTE)})")
+    if not (resources & {"aws_ecr_repository"} or "image" in text):
+        return ValidationOutcome(False, "no container image source (aws_ecr_repository or an image reference)")
+    return ValidationOutcome(True)

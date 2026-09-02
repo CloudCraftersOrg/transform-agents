@@ -32,6 +32,7 @@ class Budget(BaseModel):
     ceiling_monthly_usd: float = Field(gt=0)
     basis: str
     max_variance_pct: float = Field(default=0.0, ge=0)
+    pricing_model: str = "on_demand"  # on_demand | 1yr_ri | 3yr_ri - what the ceiling is priced on
 
     @property
     def ceiling_with_variance(self) -> float:

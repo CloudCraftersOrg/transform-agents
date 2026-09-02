@@ -14,6 +14,10 @@ agents = [
     "mcp>=1.0",
     "boto3>=1.34",
     "pyyaml>=6.0",
+    "openpyxl>=3.1",
+    "pypdf>=4",
+    "python-pptx>=0.6",
+    "python-hcl2>=4",
 ]
 dev = [
     "pytest>=8",
@@ -22,6 +26,8 @@ dev = [
     "pyyaml>=6.0",
     "boto3>=1.34",
     "moto[dynamodb,logs,ssm]>=5",
+    "openpyxl>=3.1",
+    "python-hcl2>=4",
 ]
 
 [build-system]

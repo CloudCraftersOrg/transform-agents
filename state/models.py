@@ -14,6 +14,7 @@ DecisionKind = Literal[
     "hitl",
     "interpreter_convergence",
     "remediation_outcome",
+    "modernization_artifact",
 ]
 
 

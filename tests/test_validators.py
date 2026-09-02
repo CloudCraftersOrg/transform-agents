@@ -3,7 +3,25 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tools.validators import validate_lza_config
+from tools.validators import validate_iac, validate_lza_config
+
+_VALID_IAC = """
+resource "aws_ecr_repository" "app" {
+  name = "catalog"
+}
+
+resource "aws_ecs_task_definition" "app" {
+  family                = "catalog"
+  container_definitions = "[{\\"name\\":\\"catalog\\",\\"image\\":\\"catalog:latest\\"}]"
+}
+
+resource "aws_ecs_service" "app" {
+  name            = "catalog"
+  cluster         = "prod"
+  task_definition = "catalog:1"
+  desired_count   = 2
+}
+"""
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "lza" / "valid_config.yaml"
 
@@ -69,3 +87,24 @@ def test_non_mapping_root_fails():
 
 def test_garbage_yaml_fails():
     assert not validate_lza_config("foo: bar: baz").ok
+
+
+# --- validate_iac: offline structural fallback (no terraform binary) ---
+
+
+def test_iac_accepts_a_minimal_container_deployment():
+    assert validate_iac(_VALID_IAC).ok
+
+
+def test_iac_rejects_non_container_infra():
+    r = validate_iac('resource "aws_s3_bucket" "b" {\n  bucket = "x"\n}\n')
+    assert not r.ok and "container compute target" in r.error
+
+
+def test_iac_rejects_task_def_without_an_image_source():
+    r = validate_iac('resource "aws_ecs_task_definition" "a" {\n  family = "a"\n}\n')
+    assert not r.ok and "image source" in r.error
+
+
+def test_iac_rejects_unparseable_hcl():
+    assert not validate_iac("this is not { valid hcl").ok

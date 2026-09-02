@@ -17,6 +17,15 @@ _VALID_LZA = (
     Path(__file__).resolve().parents[1] / "fixtures" / "lza" / "valid_config.yaml"
 ).read_text(encoding="utf-8")
 
+_VALID_IAC = """
+resource "aws_ecr_repository" "app" { name = "catalog" }
+resource "aws_ecs_task_definition" "app" {
+  family                = "catalog"
+  container_definitions = "[{\\"name\\":\\"catalog\\",\\"image\\":\\"catalog:latest\\"}]"
+}
+resource "aws_ecs_service" "app" { name = "catalog" cluster = "prod" desired_count = 2 }
+"""
+
 
 def _fake_model() -> FakeModel:
     def respond(prompt: str) -> str:
@@ -24,6 +33,8 @@ def _fake_model() -> FakeModel:
             return '{"verdict":"green","reasons":[]}'
         if '"attribution"' in prompt:
             return '{"attribution":"EBS oversized in billing"}'
+        if "Terraform HCL" in prompt:
+            return _VALID_IAC
         return _VALID_LZA
 
     return FakeModel(respond)
@@ -43,13 +54,19 @@ def main() -> int:
     outcome = orq.run_wave(
         "w1",
         WaveInputs(
-            finops_resources=[{"instance_type": "m5.large", "ebs_gib": 2500, "tags": {"app": "billing"}}]
+            finops_resources=[{"instance_type": "m5.large", "ebs_gib": 2500, "tags": {"app": "billing"}}],
+            modernization_target="container",  # both approaches in the same wave
         ),
     )
     print(f"outcome: {outcome}\n")
     for e in store.decisions("w1"):
-        extra = f"  {e.detail}" if e.detail else ""
+        detail = dict(e.detail)
+        detail.pop("iac", None)  # the IaC text is long; the 'verified' flag is the point
+        extra = f"  {detail}" if detail else ""
         print(f"[{e.kind}] {e.summary}{extra}")
+
+    print("\n--- Modernization target Transform cannot cover (deliverable 5) ---")
+    _demo_unmodernizable()
 
     print("\n--- Remediation learning loop ---")
     _demo_learning_loop()
@@ -64,6 +81,27 @@ def main() -> int:
     for note in sc.notes:
         print(f"  note: {note}")
     return 0
+
+
+def _demo_unmodernizable() -> None:
+    store = InMemoryStateStore()
+    disp = Dispatcher()
+    for name in ("start_replication", "cutover", "rollback"):
+        disp.register(name, lambda ctx, n=name: {n: "ok"})
+    orq = build_orchestrator(
+        _fake_model(), load_contract(), store=store, dispatcher=disp,
+        hitl=InMemoryHitlQueue(store, lambda: "t0"), clock=lambda: "t0",
+    )
+    orq.run_wave(
+        "w2",
+        WaveInputs(
+            finops_resources=[{"instance_type": "t3.small", "ebs_gib": 10, "tags": {"a": "b"}}],
+            modernization_target="hack", modernization_subject="fbctf-app",
+        ),
+    )
+    for e in store.decisions("w2"):
+        if e.kind in ("policy_denial", "escalation", "modernization_artifact") or "modernization" in e.summary:
+            print(f"[{e.kind}] {e.summary}")
 
 
 def _demo_learning_loop() -> None:

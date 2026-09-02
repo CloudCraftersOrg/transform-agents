@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum, StrEnum
 
 from agents.finops import build_finops, evaluate_deviation
-from agents.interpreter import build_interpreter
+from agents.interpreter import build_interpreter, generate_modernization_iac
 from agents.model import ModelLike
 from agents.remediation import build_remediation
 from agents.validation import build_validation, issue_verdict
@@ -27,7 +27,7 @@ SYSTEM_PROMPT = (
 )
 
 TOOL_CATALOG = {
-    "delegate_interpreter": "generate/regenerate valid configuration (LZA, IaC) until it passes the validator",
+    "delegate_interpreter": "interpret the business case prose, or generate/regenerate configuration (LZA, IaC), iterating until the validator passes",
     "delegate_remediation": "diagnose and resolve an infrastructure failure never seen before",
     "delegate_validation": "decide what to test, interpret diffs, issue a green/red verdict, trigger rollback",
     "delegate_finops": "attribute root cause to a run-rate deviation; report if the cost is not attributable",
@@ -35,7 +35,7 @@ TOOL_CATALOG = {
     "wave_status": "aggregated digest of the wave's progress: replicating, ready, failed",
     "execute_step": "dispatch a deterministic wave step (start_replication, cutover, rollback, finalize)",
     "submit_hitl_task": "request human approval; the only gate: the derived contract",
-    "escalate": "report exhausted iterations or that the tool does not cover the case",
+    "escalate": "an agent exhausted its retry/iteration budget without passing, or the request is outside what any tool or AWS Transform can do",
 }
 
 TOOLS = list(TOOL_CATALOG)
@@ -73,13 +73,20 @@ class WaveInputs:
     test_criticality: str = "medium"
     parity_diffs: dict = field(default_factory=dict)
     finops_resources: list[dict] = field(default_factory=list)
+    # modernization scenario (deliverable 1): produced as a verified IaC artifact, never applied.
+    # empty target -> only the lift-and-shift path runs.
+    modernization_target: str = ""
+    modernization_subject: str = "*"
+    modernization_objective: str = "containerize the workload on ECS/Fargate"
 
 
 def _route_system() -> str:
     catalog = "\n".join(f"- {n}: {d}" for n, d in TOOL_CATALOG.items())
     return (
         "You are the Orchestrator. Pick ONE tool for the described situation.\n"
-        f"Tools:\n{catalog}\nReply with only the exact name."
+        f"Tools:\n{catalog}\n"
+        "If an agent has already used up its attempts, or the request is outside every tool's "
+        "scope, choose escalate.\nReply with only the exact name."
     )
 
 
@@ -326,7 +333,34 @@ class Orchestrator:
             return self._escalate_step(
                 wave_id, "the Interpreter did not converge", "invalid config after the iteration budget"
             )
+        if inputs.modernization_target:
+            self._modernization_scenario(wave_id, inputs)
         return _Signal.CONTINUE
+
+    def _modernization_scenario(self, wave_id: str, inputs: WaveInputs) -> None:
+        """Deliverable 1's modernization half. If policy says the target can't be modernized
+        (e.g. Transform doesn't cover it), `check` already logged the escalation - that IS the
+        output (deliverable 5). Otherwise the Interpreter generates a verified, un-applied IaC
+        artifact. Either way the lift-and-shift path keeps going."""
+        action = Action(
+            "modernize", subject=inputs.modernization_subject,
+            modernization_target=inputs.modernization_target,
+        )
+        decision = self.check(action, wave_id=wave_id)
+        if not decision.allowed:
+            self._log(
+                wave_id, "decision",
+                f"modernization of {inputs.modernization_target!r} not pursued - rehost only",
+                {"reasons": decision.reasons},
+            )
+            return
+        result = generate_modernization_iac(inputs.modernization_objective, self.model)
+        self._log(
+            wave_id, "modernization_artifact",
+            f"modernization IaC {'verified' if result.ok else 'NOT verified'} "
+            f"in {result.iterations} iteration(s)",
+            {"verified": result.ok, "iterations": result.iterations, "iac": result.value or ""},
+        )
 
     def _step_replicate(self, wave_id, inputs, ready) -> _Signal:
         result = self.dispatch(
