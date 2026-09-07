@@ -158,7 +158,7 @@ def build_tools(orq, workspace=None, plan_job: dict | None = None) -> list:
         except TransformBusy as e:
             return json.dumps({"sent": False, "busy": True, "detail": str(e)[:200]})
         orq._log(wave_id, "decision", f"{jname}: told AWS Transform {message[:120]!r}",
-                 {"job_id": jid})
+                 {"job_id": jid}, actor="agent")
         return json.dumps({"sent": True, "note": "AWS Transform replies asynchronously; read it "
                                                  "back with migration_status"})
 
@@ -187,6 +187,7 @@ def build_tools(orq, workspace=None, plan_job: dict | None = None) -> list:
             wave_id, "remediation_outcome",
             f"remediation {'resolved' if resolved else 'did not resolve'}: {failure[:120]}",
             {"resolved": resolved, "from_runbook": getattr(result, "from_runbook", False)},
+            actor="agent",
         )
         return json.dumps({
             "resolved": resolved,
@@ -200,7 +201,10 @@ def build_tools(orq, workspace=None, plan_job: dict | None = None) -> list:
     def ask_engineer(wave_id: str, question: str) -> str:
         """Ask the engineer for something only they know - application URLs, what a healthy
         response looks like, a Secrets Manager ARN for a login. Never ask for a credential itself:
-        the answer is persisted in the decision log and rendered in the console."""
+        the answer is persisted in the decision log and rendered in the console.
+
+        Ask one thing, answerable in a sentence, naming the application you mean. The reader knows
+        these applications; they do not know how you work."""
         payload = {"question": question}
         before = orq.hitl.pending()
         orq.hitl.submit(wave_id, ENGINEER_QUESTION, payload)
@@ -212,15 +216,18 @@ def build_tools(orq, workspace=None, plan_job: dict | None = None) -> list:
                                "note": "you already asked this and it has not been answered; "
                                        "do something else or stop"})
         orq._log(wave_id, "hitl", f"asked the engineer: {question[:200]}",
-                 {"gate": ENGINEER_QUESTION})
+                 {"gate": ENGINEER_QUESTION}, actor="agent")
         return json.dumps({"asked": True, "gate": ENGINEER_QUESTION,
                            "note": "the wave continues; the answer arrives on a later run"})
 
     @tool
     def escalate(wave_id: str, context: str, hypothesis: str) -> str:
         """Hand the migration to a person with a diagnosis. Use it when your tools cannot clear the
-        blocker. This is a correct outcome, not a failure - but say precisely what is blocked and
-        what you already tried."""
+        blocker. This is a correct outcome, not a failure.
+
+        `context` is what happened for a reader who did not watch it: what you did, what you saw,
+        and what you need decided. `hypothesis` is your best explanation of the cause. Both are
+        read cold, on one screen, by whoever has to act - not by an engineer following along."""
         orq.escalate(wave_id, context=context, hypothesis=hypothesis, attempts=1)
         return json.dumps({"escalated": True, "context": context[:300]})
 

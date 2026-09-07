@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from enum import Enum, StrEnum
 
+from agents.describe import describe
 from agents.finops import build_finops, evaluate_deviation
 from agents.interpreter import build_interpreter, generate_modernization_iac
 from agents.model import ModelLike
@@ -262,13 +263,18 @@ class Orchestrator:
         self.store.put_wave(wave)
         return wave
 
-    def _log(self, wave_id: str, kind: str, summary: str, detail: dict | None = None) -> None:
+    def _log(self, wave_id: str, kind: str, summary: str, detail: dict | None = None,
+             *, actor: str = "automation") -> None:
+        """`actor` answers "who did this" for whoever reads the record. It defaults to `automation`
+        because almost everything here is the deterministic wave machinery - guards, dispatch
+        results, Transform polling. Only the lines the model actually authored pass `agent`, and
+        conflating the two hid which decisions carried judgement."""
         trace(wave_id, kind, summary, detail)
         self.store.append_decision(
             DecisionLogEntry(
                 wave_id=wave_id or "-",
                 ts=self.clock(),
-                actor="orchestrator",
+                actor=actor,
                 kind=kind,
                 summary=summary,
                 detail=detail or {},
@@ -317,7 +323,8 @@ class Orchestrator:
     ) -> dict:
         ctx = StepContext(wave_id=wave_id, step_id=step_id, contract=self.contract, params=params or {})
         result = self.dispatcher.dispatch(name, ctx, guard=guard)
-        self._log(wave_id, "decision", f"dispatched {name}", {"step_id": step_id, "result": result})
+        self._log(wave_id, "decision", describe(name, result),
+                  {"step": name, "step_id": step_id, "result": result})
         return result
 
     def delegate(self, which: str, objective: str, wave_id: str = "") -> object:
@@ -563,7 +570,8 @@ class Orchestrator:
             f"resolved where to sanity-check {', '.join(p['name'] for p in probes)} - "
             f"{' and '.join(sides) or 'source'} instance(s)",
             {"app_probes": probes, "source": "derived", "sides": sides,
-             "not_serving": result.get("not_serving")},
+             "not_serving": result.get("not_serving"),
+             "not_serving_why": result.get("not_serving_why")},
         )
         return probes
 

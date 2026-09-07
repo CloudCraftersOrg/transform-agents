@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from agents.describe import PHASES
 from state.models import WaveState
 from tools.trace import PREFIX
 
@@ -206,7 +207,7 @@ def reply_to_agent(wave_id: str, gate: str, text: str) -> dict:
     ts = _clock()
     entry = {
         "wave_id": wave_id, "ts": ts, "actor": "human", "kind": "hitl",
-        "summary": f"the engineer answered {gate or 'the agent'}: {text[:160]}",
+        "summary": f"the engineer answered: {text[:160]}",
         "detail": {"gate": gate, "engineer_reply": text},
     }
     client = _client("dynamodb")
@@ -275,6 +276,7 @@ def wave_view(wave_id: str) -> dict:
         "pipeline": PIPELINE,
         "off_ramps": OFF_RAMPS,
         "position": PIPELINE.index(status) if status in PIPELINE else -1,
+        "labels": PHASES,
         "counts": _counts(log),
     }
 

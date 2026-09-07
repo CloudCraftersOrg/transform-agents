@@ -165,7 +165,7 @@ def _from_workspace(payload: dict, call, store=None):
             raise RuntimeError(f"contract did not converge: {(result.errors or ['?'])[-1][:300]}")
         if store is not None:
             entry = DecisionLogEntry(
-                wave_id=payload["wave_id"], ts=_clock(), actor="orchestrator", kind="decision",
+                wave_id=payload["wave_id"], ts=_clock(), actor="agent", kind="decision",
                 summary=f"contract derived from {plan_job.get('jobName')}",
                 detail={"derived_contract": contract.model_dump(mode="json")},
             )

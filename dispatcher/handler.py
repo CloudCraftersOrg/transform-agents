@@ -439,21 +439,22 @@ def _discover_probe_targets(ctx: StepContext, *, mgn=None, ec2=None) -> dict:
     # costs the full timeout on every port - done in sequence, seven quiet machines outlast the
     # caller. Order is restored afterwards so the result does not depend on who answered first.
     if not addressed:
-        return {"candidates": [], "addressed": 0, "not_serving": [],
+        return {"candidates": [], "addressed": 0, "not_serving": [], "not_serving_why": {},
                 "reason": "no server in an application has a public address"}
 
-    candidates, silent = [], []
+    candidates, silent, why = [], [], {}
     with ThreadPoolExecutor(max_workers=min(16, len(addressed))) as pool:
         for a, hit in zip(addressed, pool.map(_first_answering, [x["ip"] for x in addressed])):
-            if hit is None:
+            if not (hit or {}).get("status"):
                 silent.append(a["host"])
+                why[a["host"]] = (hit or {}).get("why") or "no answer on 80 or 443"
                 continue
             candidates.append({"name": a["app"], "url": hit["url"], "expect_status": 200,
                                "instance": a["instance"], "host": a["host"],
                                "side": a["side"], "status": hit["status"]})
     sides = sorted({c["side"] for c in candidates})
     return {"candidates": candidates, "addressed": len(addressed),
-            "not_serving": silent, "sides": sides,
+            "not_serving": silent, "not_serving_why": why, "sides": sides,
             "note": "derived from MGN application membership and the instances' public addresses; "
                     "only hosts that answered are listed. `side` says whether an address is the "
                     "source or the migrated instance - the same application resolves to different "
@@ -465,23 +466,70 @@ def _describe_instances(ec2, ids: list[str]) -> list[dict]:
     return [ec2.describe_instances(InstanceIds=ids[i:i + 50]) for i in range(0, len(ids), 50)]
 
 
-def _first_answering(ip: str) -> dict | None:
-    """The first scheme the host answers on, or nothing. A redirect or an auth challenge counts:
-    the application is there, and what matters is that it answers the same way afterwards."""
+# Why a host said nothing, in the order that is most worth reporting. "Silent" covered all of
+# these, and they call for opposite responses: a hung service is a dependency it cannot reach, a
+# refusal is a service that is down, a drop is the network in front of it.
+SILENCE = (
+    ("hung", "accepted the connection but never replied - usually a dependency it cannot reach"),
+    ("spoke", "answered but the reply could not be read"),
+    ("refused", "refused the connection - nothing is listening"),
+    ("filtered", "no answer at all - a security group, NACL or host firewall is dropping traffic"),
+    ("unreachable", "the address could not be reached"),
+)
+
+
+def _reach(ip: str, port: int) -> str:
+    """Whether the port opens at all, asked separately from whether HTTP answers. Once urllib has
+    wrapped them a refusal and a dropped packet raise the same exception, and they mean opposite
+    things."""
+    import socket
+
+    try:
+        with socket.create_connection((ip, port), timeout=DISCOVERY_TIMEOUT):
+            return "open"
+    except ConnectionRefusedError:
+        return "refused"
+    except TimeoutError:
+        return "filtered"
+    except OSError:
+        return "unreachable"
+
+
+def _why_silent(seen: list[str]) -> str:
+    for kind, reason in SILENCE:
+        if kind in seen:
+            return reason
+    return "no answer on 80 or 443"
+
+
+def _first_answering(ip: str) -> dict:
+    """The first scheme the host answers on, or why it did not. A redirect or an auth challenge
+    counts: the application is there, and what matters is that it answers the same way afterwards.
+
+    The reason matters as much as the silence. A migrated web server hanging on a database still in
+    the old VPC times out exactly like a dead one, and that ambiguity is what made a stalled wave
+    unreadable from outside."""
     import urllib.error
     import urllib.request
 
+    seen: list[str] = []
     for port, scheme in WEB_PORTS:
         url = f"{scheme}://{ip}/" if port in (80, 443) else f"{scheme}://{ip}:{port}/"
+        reach = _reach(ip, port)
+        if reach != "open":
+            seen.append(reach)
+            continue
         req = urllib.request.Request(url, headers={"User-Agent": "transform-agents/discovery"})
         try:
             with urllib.request.urlopen(req, timeout=DISCOVERY_TIMEOUT) as resp:
                 return {"url": url, "status": resp.status}
         except urllib.error.HTTPError as err:
             return {"url": url, "status": err.code}
-        except Exception:  # noqa: BLE001, S112 - not serving on this port is the ordinary case
-            continue
-    return None
+        except TimeoutError:
+            seen.append("hung")
+        except Exception:  # noqa: BLE001 - the port opened, so something is there to report
+            seen.append("spoke")
+    return {"why": _why_silent(seen)}
 
 
 def _probe_apps(ctx: StepContext, *, secrets=None) -> dict:

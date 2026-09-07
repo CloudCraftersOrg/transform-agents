@@ -810,3 +810,97 @@ def test_the_migrated_instance_is_what_an_application_resolves_to_once_it_exists
     assert out["candidates"][0]["side"] == "migrated"
     assert out["candidates"][0]["url"] == "http://198.51.100.9/"
     assert out["sides"] == ["migrated"]
+
+
+# Silence used to be one thing. It is at least three, and they call for opposite responses: a
+# service waiting on a dependency, a service that is not running, and a network dropping traffic.
+class _OpenSocket:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_a):
+        return False
+
+
+def _reaches(monkeypatch, outcome):
+    import socket
+
+    def _connect(*_a, **_k):
+        if outcome == "open":
+            return _OpenSocket()
+        raise outcome
+    monkeypatch.setattr(socket, "create_connection", _connect)
+
+
+def test_a_service_hanging_on_a_dependency_is_not_reported_as_a_dead_one(monkeypatch):
+    """The real incident: the migrated web servers accepted connections and never replied, because
+    the database they wanted was still in the old VPC. That is indistinguishable from a dead
+    service unless the connection and the reply are asked about separately."""
+    import urllib.request
+
+    from dispatcher import handler
+    _reaches(monkeypatch, "open")
+
+    def _hang(*_a, **_k):
+        raise TimeoutError
+    monkeypatch.setattr(urllib.request, "urlopen", _hang)
+
+    out = handler._first_answering("198.51.100.7")
+    assert "status" not in out
+    assert "never replied" in out["why"]
+    assert "dependency" in out["why"]
+
+
+def test_a_refused_connection_says_nothing_is_listening(monkeypatch):
+    from dispatcher import handler
+    _reaches(monkeypatch, ConnectionRefusedError())
+    assert "nothing is listening" in handler._first_answering("198.51.100.8")["why"]
+
+
+def test_a_dropped_packet_points_at_the_network_rather_than_the_service(monkeypatch):
+    from dispatcher import handler
+    _reaches(monkeypatch, TimeoutError())
+    why = handler._first_answering("198.51.100.9")["why"]
+    assert "dropping traffic" in why
+    assert "listening" not in why
+
+
+def test_an_unroutable_address_is_reported_as_unreachable(monkeypatch):
+    from dispatcher import handler
+    _reaches(monkeypatch, OSError("no route to host"))
+    assert "could not be reached" in handler._first_answering("198.51.100.10")["why"]
+
+
+def test_a_host_that_answers_still_reports_its_status(monkeypatch):
+    import urllib.request
+
+    from dispatcher import handler
+    _reaches(monkeypatch, "open")
+
+    class _Resp:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *_a, **_k: _Resp())
+    assert handler._first_answering("198.51.100.11")["status"] == 200
+
+
+def test_discovery_records_why_each_silent_host_said_nothing(monkeypatch):
+    from dispatcher import handler
+    monkeypatch.setattr(
+        handler, "_first_answering",
+        lambda ip: {"url": f"http://{ip}/", "status": 200} if ip.endswith(".7")
+        else {"why": "refused the connection - nothing is listening"})
+    out = handler._discover_probe_targets(
+        _ctx("discover", {}),
+        mgn=_Mgn2([_server("s1", "app-1", "i-1", "web-01"),
+                   _server("s2", "app-1", "i-2", "nfs-01")],
+                  [{"applicationID": "app-1", "name": "app_catalog"}]),
+        ec2=_Ec2({"i-1": {"PublicIpAddress": "198.51.100.7"},
+                  "i-2": {"PublicIpAddress": "198.51.100.8"}}))
+    assert out["not_serving"] == ["nfs-01"]
+    assert out["not_serving_why"]["nfs-01"].startswith("refused")

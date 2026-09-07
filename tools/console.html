@@ -43,12 +43,13 @@
   #needsCard > h2 { color: var(--warn); }
   .need { border-top: 1px solid var(--line); padding: 14px 0; }
   .need:first-child { border-top: 0; padding-top: 0; }
-  .need .head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
-  .need .what { font-weight: 600; }
-  .need .who { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; }
-  .need.question .who { color: var(--hitl); }
-  .need.escalation .who { color: var(--bad); }
-  .need .detail { margin: 6px 0 10px; white-space: pre-wrap; word-break: break-word; }
+  .need .asktitle { font-weight: 650; font-size: 15.5px; line-height: 1.35; }
+  .need.question .asktitle { color: var(--hitl); }
+  .need.escalation .asktitle { color: var(--bad); }
+  .need .meta { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+  .need .block { margin: 10px 0; white-space: pre-wrap; word-break: break-word; }
+  .need .lbl { display: block; font-size: 10.5px; text-transform: uppercase;
+               letter-spacing: .06em; color: var(--muted); margin-bottom: 2px; }
   .need .replied { color: var(--ok); font-size: 12.5px; }
 
   /* pipeline */
@@ -60,7 +61,9 @@
   .step:last-child { border-radius: 0 8px 8px 0; border-right: 1px solid var(--line); }
   .step.done { background: color-mix(in srgb, var(--ok) 16%, var(--panel)); color: var(--ok); }
   .step.now { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .step.now.halted { background: var(--bad); border-color: var(--bad); }
+  .step.stop { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .headline { margin: 0 0 14px; font-size: 15px; line-height: 1.45; }
+  .headline b { color: var(--bad); }
   .offramp { margin-top: 12px; font-size: 12.5px; color: var(--muted); }
   .offramp b { color: var(--bad); }
 
@@ -74,13 +77,21 @@
   .k-escalation .dot, .k-rollback .dot { background: var(--bad); }
   .k-hitl .dot { background: var(--hitl); }
   .k-remediation_outcome .dot { background: var(--rem); }
-  .kind { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .foot { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-top: 4px; }
+  .byline { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em;
+            color: var(--muted); }
+  .byline.agent { color: var(--accent); }
+  .byline.you { color: var(--hitl); }
+  .legend { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
+  .legend b { color: var(--accent); font-weight: 650; }
+  .mark { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; font-weight: 650; }
+  .mark.warn { color: var(--warn); }  .mark.bad { color: var(--bad); }
+  .mark.hitl { color: var(--hitl); }  .mark.rem { color: var(--rem); }
   .summary { word-break: break-word; }
   details.detail { margin-top: 4px; }
   details.detail summary { cursor: pointer; color: var(--muted); font-size: 12px; }
   pre { margin: 6px 0 0; padding: 9px; background: var(--chipbg); border-radius: 7px;
         overflow-x: auto; font-size: 11.5px; }
-  #timeline { max-height: 460px; overflow-y: auto; }
 
   /* conversation */
   .chat { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
@@ -105,25 +116,42 @@
   <h1>transform-agents</h1>
   <select id="wave"></select>
   <span class="grow"></span>
+  <button id="newMigration">New migration</button>
   <label class="why"><input type="checkbox" id="auto" checked> auto-refresh</label>
   <button id="refresh">Refresh</button>
 </header>
 
 <main>
   <!-- Only what a person has to act on. Everything else the agent handles by itself. -->
+  <section id="startCard" hidden>
+    <h2>Start a migration</h2>
+    <p class="why" id="startWhy">Nothing is running. Give this migration a name and the agent takes
+      it from there - it reads the plan from AWS Transform, then works through the wave on its own
+      and stops here when it needs you.</p>
+    <div class="row">
+      <input id="startId" placeholder="a name for this migration" style="flex:1" size="18">
+      <button class="primary" id="start">Start</button>
+      <button id="startCancel" hidden>Cancel</button>
+    </div>
+    <p class="why" id="startStatus" style="margin-top:8px"></p>
+  </section>
+
   <section id="needsCard" hidden>
     <h2 id="needsTitle">Needs you</h2>
     <div id="needs"></div>
   </section>
 
-  <section>
-    <h2>The wave <span id="counts" class="status"></span></h2>
+  <section id="waveCard">
+    <h2>What happened</h2>
+    <p id="headline" class="headline">Select a wave.</p>
     <div class="pipe" id="pipe"></div>
     <div class="offramp" id="offramp"></div>
+    <p class="legend">Each line below says who did it: <b>the agent</b> where a judgement was made,
+      <b style="color:var(--muted)">automatic step</b> where the migration ran on its own.</p>
     <div id="timeline" style="margin-top:14px"><p class="empty">Select a wave.</p></div>
   </section>
 
-  <section>
+  <section id="askCard">
     <h2>Ask about this wave</h2>
     <div id="chat" class="chat"><p class="empty">Answered from the decision log and the contract.
       This only reads.</p></div>
@@ -176,7 +204,10 @@
 const $ = (id) => document.getElementById(id);
 let current = null;
 
-const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+// Quotes too: this escapes attribute values as well as text, and a value carrying a " silently
+// truncated the attribute at it - which is how the answer placeholder became the word "e.g.".
+const ENT = {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"};
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ENT[c]);
 const clock = (ts) => (ts || "").slice(11, 19) || "-";
 
 async function get(url) {
@@ -196,8 +227,52 @@ async function post(url, body) {
   return r.json();
 }
 
+let hasRuntime = true;
+// The start card is the empty state's whole point, but it also has to be reachable while a wave is
+// already running - otherwise the only way to begin a second migration is the operator drawer.
+let startOpen = false;
+let waveIds = [];
+
+function suggestName() {
+  const base = "wave-" + new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  let name = base;
+  for (let n = 2; waveIds.includes(name); n++) name = `${base}-${n}`;
+  return name;
+}
+
+// Whether the console can drive anything at all. Without a runtime it can still read the record,
+// and saying so beats a button that fails with a raw error when you press it.
+function setRuntime(ok) {
+  hasRuntime = ok;
+  // Ask is read-only but still travels through the runtime, so it goes dark with the rest.
+  for (const id of ["start", "run", "say", "ask"]) {
+    const b = $(id);
+    if (b) { b.disabled = !ok; b.title = ok ? "" : "no agent runtime is configured"; }
+  }
+  if (!ok) {
+    $("startWhy").innerHTML = "No agent runtime is configured (<code>AGENT_RUNTIME_ARN</code>), so "
+      + "this console can read the record but cannot start or advance a migration.";
+  }
+}
+
 async function loadWaves() {
-  const { waves } = await get("/api/waves");
+  const { waves, runtime } = await get("/api/waves");
+  setRuntime(runtime !== false);
+  waveIds = waves.map((w) => w.wave_id);
+  // With nothing running, "what happened" and "ask about this wave" have no subject.
+  const empty = waves.length === 0;
+  $("startCard").hidden = !empty && !startOpen;
+  $("waveCard").hidden = $("askCard").hidden = empty;
+  $("startCancel").hidden = empty;
+  if (hasRuntime) {
+    $("startWhy").textContent = empty
+      ? "Nothing is running. Give this migration a name and the agent takes it from there - it "
+        + "reads the plan from AWS Transform, then works through the wave on its own and stops "
+        + "here when it needs you."
+      : "This starts a second migration alongside the ones already running. It gets its own name, "
+        + "its own record, and the agent works it independently.";
+  }
+  if (!$("startId").value) $("startId").value = suggestName();
   const sel = $("wave"), keep = sel.value;
   sel.innerHTML = waves.map((w) =>
     `<option value="${esc(w.wave_id)}">${esc(w.wave_id)} - ${esc(w.status)}</option>`).join("");
@@ -207,28 +282,48 @@ async function loadWaves() {
   }
 }
 
+// An escalation and a question want different things from a person, and neither is obvious from
+// the agent's own wording - it writes findings, not requests. The panel supplies the request.
+const ASK = {
+  escalation: {
+    title: "I stopped the migration and need you to decide",
+    want: "Tell me what else to check, or tell me to go ahead anyway.",
+    ph: 'e.g. "check whether the app can reach its database" - or - "go ahead, I verified it myself"',
+  },
+  question: {
+    title: "I cannot work this out on my own",
+    want: "Describe what a working application looks like, in your own words.",
+    ph: 'e.g. "the leaderboard lists at least one team with a score"',
+  },
+  _: { title: "The agent needs you", want: "Answer in your own words.", ph: "" },
+};
+
 // Each question is answered where it is asked, in a sentence. The agent works out where its
 // applications answer by itself; what it cannot work out is what a person means by healthy.
 async function loadNeeds(force = false) {
   let d;
   try { d = await get("/api/attention" + (force ? "?force=1" : "")); } catch { return; }
-  $("needsTitle").textContent = d.count === 1 ? "1 thing needs you" : `${d.count} things need you`;
+  $("needsTitle").textContent = d.count === 1
+    ? "The agent is waiting on you" : `The agent is waiting on you (${d.count})`;
   $("needsCard").hidden = d.count === 0;
   document.title = d.count ? `(${d.count}) transform-agents` : "transform-agents console";
 
-  $("needs").innerHTML = d.items.map((i, n) => `
+  $("needs").innerHTML = d.items.map((i, n) => {
+    const a = ASK[i.kind] || ASK._;
+    return `
     <div class="need ${esc(i.kind)}">
-      <div class="head"><span class="who">${esc(i.kind)}</span>
-        <span class="what">${esc(i.wave_id)}</span>
-        <span class="status">${clock(i.ts)}</span></div>
-      <div class="detail">${esc(i.hypothesis || i.summary)}</div>
-      <textarea id="rep${n}" placeholder="Answer in your own words. It is recorded against the wave and reaches the verdict."></textarea>
+      <div class="asktitle">${esc(a.title)}</div>
+      <div class="meta">${esc(i.wave_id)} &middot; ${clock(i.ts)}</div>
+      <div class="block"><span class="lbl">What I found</span>${esc(i.hypothesis || i.summary)}</div>
+      <div class="block"><span class="lbl">What I need from you</span>${esc(a.want)}</div>
+      <textarea id="rep${n}" placeholder="${esc(a.ph)}"></textarea>
       <div class="row" style="margin-top:8px">
         <button class="primary" data-n="${n}" data-wave="${esc(i.wave_id)}"
-                data-gate="${esc(i.gate || "")}">Reply</button>
+                data-gate="${esc(i.gate || "")}">Send answer</button>
         <span class="replied" id="out${n}"></span>
       </div>
-    </div>`).join("");
+    </div>`;
+  }).join("");
 
   for (const b of $("needs").querySelectorAll("button[data-wave]")) {
     b.addEventListener("click", () => reply(b));
@@ -244,36 +339,80 @@ async function reply(button) {
   const r = await post("/api/reply",
                        { wave_id: button.dataset.wave, gate: button.dataset.gate, text });
   if (r.error) { $("out" + n).textContent = r.error; button.disabled = false; return; }
-  $("out" + n).textContent = `recorded - ${r.questions_closed} question(s) closed`;
+  $("out" + n).textContent = "Got it - sent to the agent.";
   setTimeout(() => { loadNeeds(true); loadWave(); }, 900);
 }
 
+const human = (s) => String(s || "").replace(/_/g, " ");
+
+// The status pipeline goes blank the moment a wave leaves it for ESCALATED - which is exactly when
+// a person most needs to see how far it got. So progress is drawn against the wave's own plan.
 function renderPipeline(v) {
-  const status = v.wave.status;
-  const halted = v.off_ramps.includes(status);
-  const done = new Set(v.wave.completed_steps || []);
-  $("pipe").innerHTML = v.pipeline.map((s, i) => {
-    const cls = s === status ? "step now" + (halted ? " halted" : "")
-              : (v.position >= 0 && i < v.position) ? "step done" : "step";
-    return `<div class="${cls}">${esc(s.replace(/_/g, " "))}</div>`;
+  const w = v.wave, halted = v.off_ramps.includes(w.status);
+  const plan = (w.steps || []).length ? w.steps : v.pipeline;
+  const byPlan = (w.steps || []).length > 0;
+  const done = new Set(w.completed_steps || []);
+  const here = byPlan ? (w.current_step || "") : w.status;
+  const name = (s) => (v.labels && v.labels[s]) || human(s);
+
+  $("pipe").innerHTML = plan.map((s, i) => {
+    let cls = "step";
+    if (byPlan ? done.has(s) : (v.position >= 0 && i < v.position)) cls = "step done";
+    else if (s === here) cls = halted ? "step stop" : "step now";
+    return `<div class="${cls}">${esc(name(s))}</div>`;
   }).join("");
-  $("offramp").innerHTML = halted
-    ? `Wave halted at <b>${esc(status)}</b> - it resumes on the next invocation; no state was lost.`
-    : (done.size ? `${done.size} step(s) recorded complete.` : "");
+
+  const at = (byPlan ? done.size : Math.max(v.position, 0)) + 1;
+  const reached = here ? name(here) : "";
+  $("headline").innerHTML = halted
+    ? `The migration got as far as <b>${esc(reached || "the start")}</b> and stopped there. `
+      + `It carries on from that point once you answer above - nothing done so far is lost.`
+    : w.status === "DONE"
+      ? "The migration finished. Every step completed."
+      : reached
+        ? `The migration is running. It is on <b>${esc(reached)}</b>, step ${at} of ${plan.length}.`
+        : "The migration has not started yet.";
+  $("offramp").innerHTML = done.size
+    ? `${done.size} of ${plan.length} steps done.`
+    : "";
 }
 
+// Routine progress carries no label - only the rows a person would stop on get one, in words that
+// say what happened rather than which component emitted it.
+const MARK = {
+  policy_denial: ["Refused", "warn"],
+  escalation: ["Stopped", "bad"],
+  hitl: ["You answered", "hitl"],
+  rollback: ["Rolled back", "bad"],
+  remediation_outcome: ["Fixed itself", "rem"],
+  finops_variance: ["Costs off plan", "warn"],
+};
+
+// Who did it. The record used to stamp everything "orchestrator", which read as though the model
+// had decided each line - most of them are the deterministic wave machinery, and the difference is
+// the whole question when you are deciding how much to trust the run.
+const WHO = {
+  agent:        ["The agent", "agent", "show the agent's reasoning"],
+  automation:   ["Automatic step", "", "show what the step returned"],
+  orchestrator: ["Automatic step", "", "show what the step returned"],
+  human:        ["You", "you", "show the record"],
+  system:       ["Bookkeeping", "", "show the record"],
+};
+
 function renderTimeline(v) {
-  const counts = Object.entries(v.counts).map(([k, n]) => `${k} ${n}`).join(" / ");
-  $("counts").textContent = counts ? "- " + counts : "";
-  if (!v.decisions.length) { $("timeline").innerHTML = `<p class="empty">No entries yet.</p>`; return; }
+  if (!v.decisions.length) { $("timeline").innerHTML = `<p class="empty">Nothing yet.</p>`; return; }
   $("timeline").innerHTML = v.decisions.map((e) => {
+    const m = MARK[e.kind];
+    const mark = m ? `<div class="mark ${m[1]}">${m[0]}</div>` : "";
+    const who = WHO[e.actor] || WHO.automation;
     const detail = e.detail && Object.keys(e.detail).length
-      ? `<details class="detail"><summary>detail</summary><pre>${esc(JSON.stringify(e.detail, null, 1))}</pre></details>`
+      ? `<details class="detail"><summary>${esc(who[2])}</summary><pre>${esc(JSON.stringify(e.detail, null, 1))}</pre></details>`
       : "";
     return `<div class="entry k-${esc(e.kind)}">
       <div class="time">${clock(e.ts)}</div><div class="dot"></div>
-      <div><div class="kind">${esc(e.kind)} / ${esc(e.actor)}</div>
-      <div class="summary">${esc(e.summary)}</div>${detail}</div></div>`;
+      <div>${mark}<div class="summary">${esc(e.summary)}</div>
+      <div class="foot"><span class="byline ${who[1]}">${esc(who[0])}</span>${detail}</div>
+      </div></div>`;
   }).join("");
 }
 
@@ -360,15 +499,45 @@ $("loadLogs").addEventListener("click", loadLogs);
 $("wave").addEventListener("change", () => { current = $("wave").value; loadWave(); });
 $("refresh").addEventListener("click", () => { loadWaves(); loadWave(); loadNeeds(true); });
 
+async function startWave(id, statusEl, approve = []) {
+  if (!id) { statusEl.textContent = "Give the migration a name first."; return; }
+  if (!hasRuntime) { statusEl.textContent = "No agent runtime is configured."; return; }
+  statusEl.textContent = "starting - the first run reads the plan from AWS Transform, "
+                       + "which takes a minute...";
+  const j = await post("/api/invoke", { wave_id: id, approve });
+  statusEl.textContent = j.error ? j.error : `${id}: ${j.outcome || "started"}`;
+  if (!j.error) { startOpen = false; $("startId").value = ""; }
+  current = id;
+  await loadWaves();
+  $("wave").value = id;
+  loadWave(); loadNeeds(true);
+}
+
+$("start").addEventListener("click", () =>
+  startWave($("startId").value.trim(), $("startStatus")));
+
+$("newMigration").addEventListener("click", () => {
+  startOpen = true;
+  $("startCard").hidden = false;
+  $("startCancel").hidden = waveIds.length === 0;
+  $("startId").value = suggestName();
+  $("startStatus").textContent = "";
+  loadWaves();
+  $("startCard").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("startId").focus();
+});
+
+$("startCancel").addEventListener("click", () => {
+  startOpen = false;
+  $("startStatus").textContent = "";
+  loadWaves();
+});
+
 $("run").addEventListener("click", async () => {
   const id = $("newWave").value.trim() || current;
-  if (!id) return;
+  if (!id) { $("runStatus").textContent = "Pick a wave, or type a name to start a new one."; return; }
   const approve = [...document.querySelectorAll("#g1:checked, #g2:checked")].map((c) => c.value);
-  $("runStatus").textContent = "running...";
-  const j = await post("/api/invoke", { wave_id: id, approve });
-  $("runStatus").textContent = j.error ? j.error : `${id}: ${j.outcome || "done"}`;
-  current = id; $("wave").value = id;
-  loadWaves(); loadWave(); loadNeeds(true);
+  await startWave(id, $("runStatus"), approve);
 });
 
 loadWaves(); loadNeeds(true);
