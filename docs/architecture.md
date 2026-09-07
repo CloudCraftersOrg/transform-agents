@@ -41,7 +41,7 @@ flowchart TB
     EB["EventBridge Scheduler<br/>(re-invokes every 5 min<br/>while a wave is waiting)"]
 
     subgraph RT["AgentCore Runtime — single ARM64 container"]
-        ORCH["Orchestrator<br/>route() + run_wave()"]
+        ORCH["Orchestrator agent<br/>Strands loop over 8 tools<br/>run_migration_wave is one of them"]
         SPEC["Specialists as in-process @tools:<br/>Interpreter · Remediation<br/>Validation QA · FinOps"]
         ORCH --- SPEC
     end
@@ -66,7 +66,7 @@ flowchart TB
     end
 
     SSM["SSM<br/>allow-listed remediation only"]
-    TF["AWS Transform<br/>via AgentCore Gateway (MCP)"]
+    TF["AWS Transform<br/>stdio MCP in-image<br/>fixed-session identity"]
 
     subgraph KN["S3 storage"]
         S3["Business cases"]
@@ -81,6 +81,7 @@ flowchart TB
     RT -->|read / write| DDB
     RT -->|"dispatch step (event)"| DISP
     RT -->|query| TF
+    RT -->|"read replication state"| MGN
     RT -->|consult + write runbooks| KB
     RT -->|read| S3
     RT -->|"send_command (allow-listed)"| SSM
@@ -93,18 +94,18 @@ flowchart TB
 
 | Block | What it is | Why it's here |
 |---|---|---|
-| **AgentCore Runtime** | One container. `POST /invocations`, `GET /ping` on 8080. Runs the Orchestrator + 4 specialists as in-process tools. | Keeps all agent logic in one place; the specialists are function calls, not separate services. |
+| **AgentCore Runtime** | One container, two roles by `SERVE_PROTOCOL`: `HTTP` serves `POST /invocations` + `GET /ping` on 8080 and runs the loop in-process; `MCP` serves the same tool surface on 8000/mcp for an AgentCore Harness to drive. Runs the Orchestrator + 4 specialists as in-process tools. | Keeps all agent logic in one place; the specialists are function calls, not separate services. |
 | **Bedrock (models + Guardrail)** | The LLMs the agents call. A Guardrail screens inputs for prompt-injection (Transform artifacts and logs are untrusted). | The agents' "judgement" runs here. The Guardrail is the input filter of the Guardrails pillar. |
 | **DynamoDB — `wave_state`** | The current status and progress of each migration wave. | A wave runs for hours; its state can't live in a chat context or a Lambda's memory. |
 | **DynamoDB — `decision_log`** | Every decision, denial, escalation, verdict and finding, appended in order. | The audit trail, and the raw data the autonomy scorecard reads. |
 | **DynamoDB — `step_ledger`** | One row per `(wave_id, step_id)` that has run, with its result. | Makes the dispatcher idempotent across re-invocations — a replayed step returns the stored result instead of firing twice. |
-| **Step dispatcher (Lambda)** | The only component that calls mutating AWS APIs (MGN start/cutover, Route 53 record changes). Re-evaluates the policy on every call. | The trust boundary. Even if the Orchestrator hallucinated an authorization, the dispatcher rejects it. This is why the executor can't be an agent. |
+| **Step dispatcher (Lambda)** | The only component that calls mutating AWS APIs (MGN start/cutover, Route 53 record changes). Re-evaluates the policy on every call, **and refuses the cutover unless the wave has a green test verdict judged on a real diff**. It also runs the application sanity check, resolving any login from Secrets Manager at the moment of use. | The trust boundary. Every guard lives here rather than in the order the agent happens to call things — an agent choosing its own sequence must not reach a destructive action by never mentioning the check before it. |
 | **AWS MGN** | Copies running servers into AWS, keeps them synced, performs test launches and cutover. | The actual migration mechanism. |
 | **Route 53** | DNS records for the apps, with low TTL. | Cutover = flip DNS to the migrated servers; rollback = flip it back. Low TTL makes both fast and reversible. |
 | **SSM** | Runs remediation commands on hosts. Restricted to the documents in `contract.allowed_actions`, enforced in code. | Remediation is the only agent that writes; SSM is how it acts. |
-| **AWS Transform (via AgentCore Gateway)** | The MCP server that produces the business case, TCO comparisons and modernization scenarios. | This team consumes and validates Transform's output; it does not recompute it. |
+| **AWS Transform (stdio MCP, in-image)** | The MCP server that produces the business case, the wave plan and the modernization scenarios. **Not** via AgentCore Gateway: its `mcpServer` target needs an `https://` endpoint and this MCP ships as a stdio package. Our *own* tool surface does go through a Gateway, because `tools/mcp_server.py` serves it over https from an MCP-protocol Runtime. | This team consumes and validates Transform's output; it does not recompute it. Workspace access is per assumed-role *session*, so the runtime re-assumes itself under a fixed session name. |
 | **S3 + S3 Vectors KB** | Business-case documents; the runbook knowledge base. | Long-term memory. S3 Vectors, never OpenSearch Serverless (a 24/7 cost floor). |
-| **EventBridge Scheduler** | Fires every 5 minutes while a wave is in a long wait, created disabled. | Re-invokes the Runtime so replication (hours long) never blocks a session. `run_wave` is resumable, so it's the same call each time. |
+| **EventBridge Scheduler → resume Lambda** | Fires every 5 minutes at a small Lambda that calls `InvokeHarness` when `HARNESS_ARN` is set, and `InvokeAgentRuntime` with `{"action":"resume"}` otherwise; the agent then picks up whatever waves are still in flight. Created only when `runtime_arn` is passed to `terraform apply`. | Re-invokes the Runtime so replication (hours long) never blocks a session. A **native** Lambda target, not the `aws-sdk:bedrockagentcore` universal target — that one is accepted at apply time and then never delivers. **Written and unit-tested; not yet verified against a live schedule.** |
 | **CloudWatch Logs / OTEL** | Observability. | Traces and logs from the Runtime and the dispatcher. |
 | **IAM roles (two, split)** | *Runtime role*: DynamoDB on `wave_state` + `decision_log`, `bedrock:InvokeModel`, MGN **read only**, `lambda:InvokeFunction` on the step dispatcher, SSM `SendCommand` (allow-listed), Logs read, S3 read. *Step-dispatcher role*: `step_ledger`, MGN **Start\*/FinalizeCutover**, Route 53 record changes, its own logs. | The mutating actions live only on the Lambda's role. The deny-list ("never delete accounts, never touch management SCPs, never write to the source environment") is the *absence* of those grants, not a prompt. |
 

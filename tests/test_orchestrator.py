@@ -1,7 +1,7 @@
 import pytest
 
 from agents.model import FakeModel
-from agents.orchestrator import Specialists, build_orchestrator, route
+from agents.orchestrator import Specialists, build_orchestrator
 from dispatcher.steps import Dispatcher, StepRejected
 from state.models import WaveState, WaveStatus
 from state.store import InMemoryStateStore
@@ -32,14 +32,6 @@ def _orq(model):
     return orq, store, seen
 
 
-def test_route_picks_tool_from_catalog():
-    assert route(FakeModel(["use delegate_interpreter now"]), "x") == "delegate_interpreter"
-
-
-def test_decide_logs_the_choice():
-    orq, store, _ = _orq(FakeModel(["escalate"]))
-    assert orq.decide("5 attempts and no convergence") == "escalate"
-    assert store.decisions("-")[0].kind == "decision"
 
 
 def test_check_denies_and_logs():

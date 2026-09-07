@@ -1,0 +1,4 @@
+app_id,move_group_id,reason,app_name,move_group_name
+app_project_nami,mg_000,Strategy: rehost,Project Nami,Unclassified-MoveGroup
+app_contoso_catalog,mg_000,Strategy: rehost,Contoso Catalog,Unclassified-MoveGroup
+app_contoso_scoreboard,mg_001,Strategy: rehost,Contoso Scoreboard,Infra-MoveGroup

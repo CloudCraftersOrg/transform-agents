@@ -1,0 +1,43 @@
+{
+  "config": {
+    "size_constraints": {
+      "max_num_of_entities": 50,
+      "max_resources_per_entity": 150
+    },
+    "inclusion_filters": {},
+    "exclusion_filters": {},
+    "group_by_attributes": [
+      "environment"
+    ],
+    "separate_by_values": [],
+    "priority": [
+      {
+        "environment": [
+          "infra",
+          "unclassified"
+        ]
+      }
+    ],
+    "extensions": {},
+    "seed": 42
+  },
+  "input_file_hashes": {
+    "servers.csv": "e3a27dd38b0bb881e1cc99e58c7dbc9cb408fda793731fbdc5a2e552ada14e00",
+    "move_groups.csv": "88b0dec032f7a95bb61d81f124eb0a37fd04db3c5f50bf3a1c9e483bb0f3a2f9",
+    "applications.csv": "0590e461a656cd06a48f1a49c1594f2c940944505a556922d3bc6ffc64a04dbf",
+    "apps_to_move_groups.csv": "0d732667fa5ef1a835023e518e5da8838489f07c7ff10e4d29ae50c62c802e0b",
+    "servers_to_apps.csv": "3753151d095830538843497eaa31a1555120facd0a23ee73f17c27ba622dbcbf",
+    "network_connections.csv": "d14b94ed5c90a75c20d5c8c139071ec12ff49857cf44b7e20ac44501b19438e9"
+  },
+  "seed": 42,
+  "dependency_versions": {
+    "polars": "1.41.2"
+  },
+  "runtime": "< 1s",
+  "memory": "< 64MB",
+  "validator_results": {
+    "wave_plan_validation": "pass",
+    "constraint_validation": "pass",
+    "golden_pack_validation": "pass (3/3 packs)"
+  }
+}

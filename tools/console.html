@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>transform-agents console</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #fff; --ink: #1c1c1a; --muted: #6b6b66; --line: #e2e2dd;
+    --accent: #3b6ea5; --ok: #2f7d4f; --warn: #a8730f; --bad: #b03a34; --hitl: #6b4fa3;
+    --rem: #16716b; --chipbg: #ececE7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16171a; --panel: #1e1f23; --ink: #e8e8e4; --muted: #9a9a94; --line: #2e3037;
+      --accent: #7aa8d8; --ok: #6dbd8b; --warn: #d9a441; --bad: #e08079; --hitl: #a98fd4;
+      --rem: #5cbdb5; --chipbg: #2a2c31;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+           padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  h1 { font-size: 15px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+  .grow { flex: 1; }
+  select, input, textarea, button { font: inherit; color: var(--ink); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; }
+  textarea { resize: vertical; width: 100%; min-height: 62px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  main { padding: 20px; max-width: 1080px; margin: 0 auto; display: grid; gap: 18px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  section > h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em;
+                 color: var(--muted); margin: 0 0 14px; font-weight: 650; }
+  .status, .why { color: var(--muted); font-size: 12.5px; }
+  .empty { color: var(--muted); margin: 0; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+  /* what needs a person */
+  #needsCard { border-color: var(--warn); }
+  #needsCard > h2 { color: var(--warn); }
+  .need { border-top: 1px solid var(--line); padding: 14px 0; }
+  .need:first-child { border-top: 0; padding-top: 0; }
+  .need .head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .need .what { font-weight: 600; }
+  .need .who { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; }
+  .need.question .who { color: var(--hitl); }
+  .need.escalation .who { color: var(--bad); }
+  .need .detail { margin: 6px 0 10px; white-space: pre-wrap; word-break: break-word; }
+  .need .replied { color: var(--ok); font-size: 12.5px; }
+
+  /* pipeline */
+  .pipe { display: flex; overflow-x: auto; padding-bottom: 4px; }
+  .step { flex: 1 0 auto; min-width: 92px; text-align: center; padding: 9px 10px; font-size: 11.5px;
+          font-weight: 600; letter-spacing: .02em; background: var(--chipbg); color: var(--muted);
+          border: 1px solid var(--line); border-right: 0; }
+  .step:first-child { border-radius: 8px 0 0 8px; }
+  .step:last-child { border-radius: 0 8px 8px 0; border-right: 1px solid var(--line); }
+  .step.done { background: color-mix(in srgb, var(--ok) 16%, var(--panel)); color: var(--ok); }
+  .step.now { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .step.now.halted { background: var(--bad); border-color: var(--bad); }
+  .offramp { margin-top: 12px; font-size: 12.5px; color: var(--muted); }
+  .offramp b { color: var(--bad); }
+
+  /* the record */
+  .entry { display: grid; grid-template-columns: 84px 12px 1fr; gap: 10px; padding: 9px 0;
+           border-top: 1px solid var(--line); align-items: start; }
+  .entry:first-child { border-top: 0; }
+  .time { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 6px; background: var(--muted); }
+  .k-policy_denial .dot, .k-finops_variance .dot { background: var(--warn); }
+  .k-escalation .dot, .k-rollback .dot { background: var(--bad); }
+  .k-hitl .dot { background: var(--hitl); }
+  .k-remediation_outcome .dot { background: var(--rem); }
+  .kind { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .summary { word-break: break-word; }
+  details.detail { margin-top: 4px; }
+  details.detail summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  pre { margin: 6px 0 0; padding: 9px; background: var(--chipbg); border-radius: 7px;
+        overflow-x: auto; font-size: 11.5px; }
+  #timeline { max-height: 460px; overflow-y: auto; }
+
+  /* conversation */
+  .chat { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+  .turn .who { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em;
+               color: var(--muted); margin-bottom: 2px; }
+  .turn.me .who { color: var(--accent); }
+  .turn .body { white-space: pre-wrap; word-break: break-word; }
+  .turn .ground { margin-top: 4px; font-size: 11.5px; color: var(--muted); }
+
+  details.drawer { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+  details.drawer > summary { padding: 14px 18px; cursor: pointer; font-size: 12px;
+    text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 650; }
+  details.drawer > .body { padding: 0 18px 18px; display: grid; gap: 18px; }
+  .sub { border-top: 1px solid var(--line); padding-top: 14px; }
+  .sub h3 { font-size: 13px; margin: 0 0 6px; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 20px; background: var(--chipbg); }
+  .badge.ok { color: var(--ok); } .badge.bad { color: var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <h1>transform-agents</h1>
+  <select id="wave"></select>
+  <span class="grow"></span>
+  <label class="why"><input type="checkbox" id="auto" checked> auto-refresh</label>
+  <button id="refresh">Refresh</button>
+</header>
+
+<main>
+  <!-- Only what a person has to act on. Everything else the agent handles by itself. -->
+  <section id="needsCard" hidden>
+    <h2 id="needsTitle">Needs you</h2>
+    <div id="needs"></div>
+  </section>
+
+  <section>
+    <h2>The wave <span id="counts" class="status"></span></h2>
+    <div class="pipe" id="pipe"></div>
+    <div class="offramp" id="offramp"></div>
+    <div id="timeline" style="margin-top:14px"><p class="empty">Select a wave.</p></div>
+  </section>
+
+  <section>
+    <h2>Ask about this wave</h2>
+    <div id="chat" class="chat"><p class="empty">Answered from the decision log and the contract.
+      This only reads.</p></div>
+    <div class="row" style="margin-top:10px">
+      <input id="msg" placeholder="e.g. why was the cutover withheld?" style="flex:1">
+      <button class="primary" id="ask">Ask</button>
+    </div>
+  </section>
+
+  <!-- Folded away on purpose: these change the migration rather than describe it. -->
+  <details class="drawer">
+    <summary>Operator actions</summary>
+    <div class="body">
+      <div class="sub">
+        <h3>Run a wave</h3>
+        <p class="why">The same call the scheduler makes. It is resumable, so running it twice is safe.</p>
+        <div class="row">
+          <input id="newWave" placeholder="wave id" style="flex:1" size="14">
+          <button id="run">Run</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <label class="why"><input type="checkbox" id="g1" value="proceed_wave_cutover"> approve cutover</label>
+          <label class="why"><input type="checkbox" id="g2" value="resize_to_peak"> approve re-size</label>
+          <span class="status" id="runStatus"></span>
+        </div>
+      </div>
+
+      <div class="sub">
+        <h3>Speak into the AWS Transform job</h3>
+        <p class="why">This writes into the migration's conversation <b>as the agent</b>. Kept apart
+          from Ask on purpose: one reads the record, the other changes the migration.</p>
+        <div class="row">
+          <input id="sayMsg" placeholder="a message for AWS Transform" style="flex:1">
+          <button id="say">Send</button>
+        </div>
+        <div id="transform" style="margin-top:10px"><p class="empty">Not loaded.</p></div>
+        <div class="row" style="margin-top:8px"><button id="loadTransform">Read job &amp; chat</button></div>
+      </div>
+
+      <div class="sub">
+        <h3>Runtime log</h3>
+        <div id="logs"><p class="empty">Not loaded.</p></div>
+        <div class="row" style="margin-top:8px"><button id="loadLogs">Load last 30 min</button></div>
+      </div>
+    </div>
+  </details>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let current = null;
+
+const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const clock = (ts) => (ts || "").slice(11, 19) || "-";
+
+async function get(url) {
+  const r = await fetch(url);
+  const j = await r.json();
+  if (j.error) throw new Error(j.error);
+  return j;
+}
+
+// Returns the body rather than throwing on {error}: a rejected answer belongs next to the box it
+// was typed into, not in a dead panel.
+async function post(url, body) {
+  const r = await fetch(url, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return r.json();
+}
+
+async function loadWaves() {
+  const { waves } = await get("/api/waves");
+  const sel = $("wave"), keep = sel.value;
+  sel.innerHTML = waves.map((w) =>
+    `<option value="${esc(w.wave_id)}">${esc(w.wave_id)} - ${esc(w.status)}</option>`).join("");
+  if (waves.length) {
+    sel.value = waves.some((w) => w.wave_id === keep) ? keep : (current || waves[0].wave_id);
+    if (sel.value !== current) { current = sel.value; await loadWave(); }
+  }
+}
+
+// Each question is answered where it is asked, in a sentence. The agent works out where its
+// applications answer by itself; what it cannot work out is what a person means by healthy.
+async function loadNeeds(force = false) {
+  let d;
+  try { d = await get("/api/attention" + (force ? "?force=1" : "")); } catch { return; }
+  $("needsTitle").textContent = d.count === 1 ? "1 thing needs you" : `${d.count} things need you`;
+  $("needsCard").hidden = d.count === 0;
+  document.title = d.count ? `(${d.count}) transform-agents` : "transform-agents console";
+
+  $("needs").innerHTML = d.items.map((i, n) => `
+    <div class="need ${esc(i.kind)}">
+      <div class="head"><span class="who">${esc(i.kind)}</span>
+        <span class="what">${esc(i.wave_id)}</span>
+        <span class="status">${clock(i.ts)}</span></div>
+      <div class="detail">${esc(i.hypothesis || i.summary)}</div>
+      <textarea id="rep${n}" placeholder="Answer in your own words. It is recorded against the wave and reaches the verdict."></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="primary" data-n="${n}" data-wave="${esc(i.wave_id)}"
+                data-gate="${esc(i.gate || "")}">Reply</button>
+        <span class="replied" id="out${n}"></span>
+      </div>
+    </div>`).join("");
+
+  for (const b of $("needs").querySelectorAll("button[data-wave]")) {
+    b.addEventListener("click", () => reply(b));
+  }
+}
+
+async function reply(button) {
+  const n = button.dataset.n;
+  const text = $("rep" + n).value.trim();
+  if (!text) return;
+  button.disabled = true;
+  $("out" + n).textContent = "sending...";
+  const r = await post("/api/reply",
+                       { wave_id: button.dataset.wave, gate: button.dataset.gate, text });
+  if (r.error) { $("out" + n).textContent = r.error; button.disabled = false; return; }
+  $("out" + n).textContent = `recorded - ${r.questions_closed} question(s) closed`;
+  setTimeout(() => { loadNeeds(true); loadWave(); }, 900);
+}
+
+function renderPipeline(v) {
+  const status = v.wave.status;
+  const halted = v.off_ramps.includes(status);
+  const done = new Set(v.wave.completed_steps || []);
+  $("pipe").innerHTML = v.pipeline.map((s, i) => {
+    const cls = s === status ? "step now" + (halted ? " halted" : "")
+              : (v.position >= 0 && i < v.position) ? "step done" : "step";
+    return `<div class="${cls}">${esc(s.replace(/_/g, " "))}</div>`;
+  }).join("");
+  $("offramp").innerHTML = halted
+    ? `Wave halted at <b>${esc(status)}</b> - it resumes on the next invocation; no state was lost.`
+    : (done.size ? `${done.size} step(s) recorded complete.` : "");
+}
+
+function renderTimeline(v) {
+  const counts = Object.entries(v.counts).map(([k, n]) => `${k} ${n}`).join(" / ");
+  $("counts").textContent = counts ? "- " + counts : "";
+  if (!v.decisions.length) { $("timeline").innerHTML = `<p class="empty">No entries yet.</p>`; return; }
+  $("timeline").innerHTML = v.decisions.map((e) => {
+    const detail = e.detail && Object.keys(e.detail).length
+      ? `<details class="detail"><summary>detail</summary><pre>${esc(JSON.stringify(e.detail, null, 1))}</pre></details>`
+      : "";
+    return `<div class="entry k-${esc(e.kind)}">
+      <div class="time">${clock(e.ts)}</div><div class="dot"></div>
+      <div><div class="kind">${esc(e.kind)} / ${esc(e.actor)}</div>
+      <div class="summary">${esc(e.summary)}</div>${detail}</div></div>`;
+  }).join("");
+}
+
+async function loadWave() {
+  if (!current) return;
+  const v = await get("/api/wave?id=" + encodeURIComponent(current));
+  renderPipeline(v);
+  renderTimeline(v);
+}
+
+async function loadTransform() {
+  $("transform").innerHTML = `<p class="empty">Reading the job...</p>`;
+  try {
+    const d = await get("/api/transform");
+    const status = d.job_status?.job?.job?.statusDetails?.status || "unknown";
+    const pending = d.pending_interaction || {};
+    const opts = (pending.options || []).map((o) => o.value || o.label);
+    $("transform").innerHTML = `
+      <div class="row"><span class="badge ${status === "AWAITING_HUMAN_INPUT" ? "bad" : "ok"}">${esc(status)}</span>
+        <span class="status">${d.messages ?? 0} messages</span></div>
+      ${pending.text ? `<div class="detail">${esc(pending.text)}</div>` : ""}
+      ${opts.length ? `<div class="status">offers: ${esc(opts.join(", "))}</div>` : ""}`;
+  } catch (e) {
+    $("transform").innerHTML = `<p class="empty">${esc(e.message)}</p>`;
+  }
+}
+
+async function loadLogs() {
+  $("logs").innerHTML = `<p class="empty">Reading CloudWatch...</p>`;
+  try {
+    const { events } = await get("/api/logs?minutes=30");
+    $("logs").innerHTML = events.length
+      ? `<pre>${events.map((e) => clock(e.ts) + "  " + esc(e.message)).join("\n")}</pre>`
+      : `<p class="empty">Nothing from the agent in the last 30 minutes.</p>`;
+  } catch (e) {
+    $("logs").innerHTML = `<p class="empty">${esc(e.message)}</p>`;
+  }
+}
+
+function turn(who, cls, body) {
+  const el = document.createElement("div");
+  el.className = "turn " + cls;
+  el.innerHTML = `<div class="who">${esc(who)}</div><div class="body">${esc(body)}</div>`;
+  const box = $("chat");
+  if (box.querySelector(".empty")) box.innerHTML = "";
+  box.appendChild(el);
+  box.scrollTop = box.scrollHeight;
+  return el;
+}
+
+async function askAgent() {
+  const text = $("msg").value.trim();
+  if (!text) return;
+  $("msg").value = "";
+  turn("you", "me", text);
+  const waiting = turn("agent", "", "...");
+  const j = await post("/api/ask", { text, wave_id: current });
+  if (j.error) { waiting.querySelector(".body").textContent = j.error; return; }
+  const g = j.grounded_on || {};
+  waiting.querySelector(".body").textContent = j.answer || "(no answer)";
+  waiting.insertAdjacentHTML("beforeend",
+    `<div class="ground">grounded on ${g.decisions ?? 0} decision(s), job ${esc(g.job_status || "?")}` +
+    `${g.has_contract ? ", contract loaded" : ", no contract"}</div>`);
+}
+
+async function sayToJob() {
+  const text = $("sayMsg").value.trim();
+  if (!text) return;
+  $("sayMsg").value = "";
+  const j = await post("/api/say", { text, wave_id: current });
+  $("transform").innerHTML = j.error
+    ? `<p class="empty">${esc(j.error)}</p>`
+    : (j.busy
+        ? `<p class="empty">The assistant is still working on the previous turn - a conversation
+           takes one message at a time.</p>`
+        : `<p class="empty">Sent. AWS Transform replies asynchronously; use "Read job &amp; chat".</p>`);
+}
+
+$("ask").addEventListener("click", askAgent);
+$("msg").addEventListener("keydown", (e) => { if (e.key === "Enter") askAgent(); });
+$("say").addEventListener("click", sayToJob);
+$("loadTransform").addEventListener("click", loadTransform);
+$("loadLogs").addEventListener("click", loadLogs);
+$("wave").addEventListener("change", () => { current = $("wave").value; loadWave(); });
+$("refresh").addEventListener("click", () => { loadWaves(); loadWave(); loadNeeds(true); });
+
+$("run").addEventListener("click", async () => {
+  const id = $("newWave").value.trim() || current;
+  if (!id) return;
+  const approve = [...document.querySelectorAll("#g1:checked, #g2:checked")].map((c) => c.value);
+  $("runStatus").textContent = "running...";
+  const j = await post("/api/invoke", { wave_id: id, approve });
+  $("runStatus").textContent = j.error ? j.error : `${id}: ${j.outcome || "done"}`;
+  current = id; $("wave").value = id;
+  loadWaves(); loadWave(); loadNeeds(true);
+});
+
+loadWaves(); loadNeeds(true);
+setInterval(() => { if ($("auto").checked) { loadWaves(); loadWave(); } }, 6000);
+// its own timer: the attention query costs a DynamoDB scan and does not need the 6s cadence
+setInterval(() => { if ($("auto").checked) loadNeeds(); }, 30000);
+</script>
+</body>
+</html>

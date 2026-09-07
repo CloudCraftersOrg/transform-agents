@@ -11,6 +11,12 @@ INSTANCE_USD_MONTH = {
     "t4g.medium": 24.19,
     "m5.large": 69.12,
     "c7a.medium": 37.46,
+    "t3a.nano": 3.43,
+    "t3a.micro": 6.86,
+    "t3a.small": 13.72,
+    "t2.small": 16.79,
+    "c5a.large": 56.21,
+    "m7a.medium": 42.27,
 }
 EBS_GP3_USD_GB_MONTH = 0.08
 

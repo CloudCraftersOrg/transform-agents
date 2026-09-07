@@ -13,13 +13,32 @@ SYSTEM_PROMPT = (
 TOOLS = ["read_spec", "read_transform_artifact", "query_kb", "validate_lza_config", "validate_iac"]
 
 
+# The oracle's contract, stated for the model. Without it a real model has to guess key names and
+# burns the whole iteration budget on schema, not on the objective.
+LZA_SPEC = """The validator requires exactly this YAML shape:
+
+global_config:
+  homeRegion: <region>
+  enabledRegions: [<must include homeRegion>]
+  controlTower: {enable: false}
+accounts_config:
+  mandatoryAccounts:
+    - {name: Management, email: <address with @>}
+    - {name: LogArchive, email: <address with @>}
+    - {name: Audit, email: <address with @>}
+security_config:
+  guardduty: {enable: false}
+  macie: {enable: false}
+  securityHub: {enable: false}
+  accessAnalyzer: {enable: false}
+  awsConfig: {enableConfigurationRecorder: false, ruleSets: []}"""
+
+
 def _prompt(objective: str, spec: str, errors: list[str]) -> str:
-    parts = [f"OBJECTIVE: {objective}"]
-    if spec:
-        parts.append(f"SPECIFICATION:\n{spec}")
+    parts = [f"OBJECTIVE: {objective}", f"SPECIFICATION:\n{spec or LZA_SPEC}"]
     if errors:
         parts.append(f"The validator rejected the previous attempt: {errors[-1]}\nFix it.")
-    parts.append("Return only the config: global_config, accounts_config and security_config.")
+    parts.append("Return only the YAML config, nothing else.")
     return "\n\n".join(parts)
 
 

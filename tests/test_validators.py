@@ -108,3 +108,53 @@ def test_iac_rejects_task_def_without_an_image_source():
 
 def test_iac_rejects_unparseable_hcl():
     assert not validate_iac("this is not { valid hcl").ok
+
+
+REAL_FARGATE_HCL = '''provider "aws" {
+  region = "us-west-2"
+}
+
+resource "aws_ecs_cluster" "example" {
+  name = "example-cluster"
+}
+
+resource "aws_ecs_task_definition" "example" {
+  family                   = "example-task"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = "256"
+  memory                   = "512"
+
+  container_definitions = jsonencode([
+    {
+      name      = "example-container"
+      image     = "${aws_ecr_repository.example.repository_url}:latest"
+      essential = true
+    }
+  ])
+}
+
+resource "aws_ecr_repository" "example" {
+  name = "example-repo"
+}
+
+resource "aws_ecs_service" "example" {
+  name            = "example-service"
+  cluster         = aws_ecs_cluster.example.id
+  task_definition = aws_ecs_task_definition.example.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+}
+'''
+
+
+def test_a_whole_document_is_never_probed_as_a_path():
+    # pathlib lets ENAMETOOLONG escape is_dir()/is_file() on Linux, so passing the generated HCL
+    # straight through used to raise OSError(36) inside the container while passing on Windows.
+    outcome = validate_iac(REAL_FARGATE_HCL)
+    assert outcome.ok, outcome.error
+
+
+def test_long_single_line_document_is_not_probed_either():
+    outcome = validate_iac('resource "aws_ecs_service" "x" { name = "' + "a" * 300 + '" }')
+    assert isinstance(outcome.ok, bool)  # no OSError

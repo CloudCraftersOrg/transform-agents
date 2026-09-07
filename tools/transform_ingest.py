@@ -451,10 +451,249 @@ def discovery_to_business_case(pkg: DiscoveryPackage) -> str:
     return "\n".join(lines) + "\n"
 
 
-def load_business_case(path: str | Path) -> str:
-    """Auto-detect: a discovery export (has server_inventory.csv) vs. a Transform assessment
-    (PPTX/XLSX/PDF), and flatten either into the prose blob `extract_contract` takes."""
+# --- Migration plan (the wave-planning export: MGN import + enriched inventory + apps) ---
+
+# vCPU / GiB for the instance types the wave plan assigns, so the plan's own sizing can be checked
+# against the inventory it was built from.
+INSTANCE_SPEC = {
+    "t3a.nano": (2, 0.5),
+    "t3a.micro": (2, 1.0),
+    "t3a.small": (2, 2.0),
+    "t2.small": (1, 2.0),
+    "t3.micro": (2, 1.0),
+    "t3.small": (2, 2.0),
+    "c5a.large": (2, 4.0),
+    "m7a.medium": (1, 4.0),
+    "m5.large": (2, 8.0),
+}
+
+
+@dataclass
+class MigrationPlanPackage:
+    wave: str = ""
+    servers: list[dict] = field(default_factory=list)
+    apps: list[dict] = field(default_factory=list)
+    databases: list[dict] = field(default_factory=list)
+    move_groups: dict[str, str] = field(default_factory=dict)
+    citations: dict[str, dict] = field(default_factory=dict)
+    audit: dict = field(default_factory=dict)
+
+
+def _one(root: Path, *patterns: str) -> Path | None:
+    for pat in patterns:
+        hits = sorted(root.glob(pat)) or sorted(root.glob(f"**/{pat}"))
+        if hits:
+            return hits[-1]
+    return None
+
+
+def read_migration_plan(path: str | Path) -> MigrationPlanPackage:
     root = _as_dir(path)
+    pkg = MigrationPlanPackage()
+
+    by_id: dict[str, dict] = {}
+    for r in _read_csv(_one(root, "mgn_import*.csv") or Path()):
+        sid = r.get("mgn:server:user-provided-id") or r.get("mgn:server:tag:hostname") or ""
+        if not sid:
+            continue
+        pkg.wave = pkg.wave or (r.get("mgn:wave:name") or "")
+        by_id[sid] = {
+            "name": sid,
+            "ip": r.get("mgn:launch:nic:0:private-ip:0"),
+            "platform": r.get("mgn:server:platform"),
+            "instance_type": r.get("mgn:launch:instance-type"),
+            "tenancy": r.get("mgn:launch:placement:tenancy"),
+            "app_id": r.get("mgn:app:name"),
+            "vmmoref": r.get("mgn:server:tag:vmmoref"),
+        }
+
+    for r in _read_csv(_one(root, "enriched_inventory*.csv") or Path()):
+        sid = r.get("mgn:server:user-provided-id") or ""
+        s = by_id.setdefault(sid, {"name": sid})
+        mib = _num(r.get("metadata:total_system_memory_mebibytes"))
+        s.update({
+            "app_name": r.get("metadata:app_name"),
+            "os": r.get("metadata:operating_system_type"),
+            "cores": _num(r.get("metadata:total_cpu_cores")),
+            "ram_gib": round(mib / 1024, 2) if mib else None,
+            "cpu_avg": _num(r.get("metadata:average_cpu_utilization_percentage")),
+            "cpu_peak": _num(r.get("metadata:peak_cpu_utilization_percentage")),
+            "mem_avg": _num(r.get("metadata:average_memory_utilization_percentage")),
+            "mem_peak": _num(r.get("metadata:peak_memory_utilization_percentage")),
+            "move_group_id": r.get("metadata:move_group_id"),
+            "move_group": r.get("metadata:move_group_name"),
+            "reason": r.get("metadata:reason"),
+        })
+    pkg.servers = sorted(by_id.values(), key=lambda s: s["name"])
+
+    for r in _read_csv(_one(root, "applications*.csv") or Path()):
+        if "server_ids" not in r:
+            continue
+        pkg.apps.append({
+            "id": r.get("app_id"),
+            "name": r.get("app_name"),
+            "strategy": r.get("migration_strategy"),
+            "environment": r.get("environment"),
+            "confidence": _num(r.get("confidence_score")),
+            "server_count": int(_num(r.get("server_count")) or 0),
+            "priority_rank": r.get("priority_rank"),
+            "scoring": r.get("scoring_justification"),
+        })
+    for r in _read_csv(_one(root, "databases*.csv") or Path()):
+        if "server_ids" in r:
+            continue
+        pkg.databases.append({
+            "id": r.get("app_id"), "name": r.get("app_name"),
+            "strategy": r.get("migration_strategy"),
+        })
+
+    for r in _read_csv(_one(root, "apps_to_move_groups*.csv") or Path()):
+        if r.get("app_id"):
+            pkg.move_groups[r["app_id"]] = r.get("move_group_name") or ""
+
+    for r in _read_csv(_one(root, "citations*.csv") or Path()):
+        eid = r.get("entity_id")
+        if eid:
+            pkg.citations[eid] = {
+                "source": r.get("source"), "row": r.get("source_row"),
+                "move_group_rule": r.get("move_group_rule"), "wave_rule": r.get("wave_rule"),
+            }
+
+    audit = _one(root, "audit*.json")
+    if audit and audit.is_file():
+        import json
+
+        pkg.audit = json.loads(audit.read_text(encoding="utf-8"))
+    return pkg
+
+
+def plan_sizing_findings(pkg: MigrationPlanPackage) -> list[dict]:
+    """Where the wave plan's own instance choice is smaller than the inventory it was built from."""
+    out = []
+    for s in pkg.servers:
+        spec = INSTANCE_SPEC.get(s.get("instance_type") or "")
+        if not spec:
+            continue
+        vcpu, gib = spec
+        short = []
+        if s.get("cores") and vcpu < s["cores"]:
+            short.append(f"{vcpu} vCPU < {s['cores']:.0f} cores observed")
+        if s.get("ram_gib") and gib < s["ram_gib"]:
+            short.append(f"{gib} GiB RAM < {s['ram_gib']} GiB observed")
+        if short:
+            out.append({
+                "server": s["name"], "instance_type": s["instance_type"],
+                "shortfalls": short, "cpu_peak": s.get("cpu_peak"), "mem_peak": s.get("mem_peak"),
+            })
+    return out
+
+
+def plan_run_rate(pkg: MigrationPlanPackage, pricing_model: str = "on_demand") -> float:
+    """The wave's monthly cost as the plan sizes it. Arithmetic, so the model never guesses it."""
+    from tools.finops import monthly_run_rate
+
+    resources = [{"instance_type": s.get("instance_type") or ""} for s in pkg.servers]
+    return monthly_run_rate(resources, pricing_model=pricing_model)
+
+
+def _plan_config_line(cfg: dict) -> str:
+    cap = (cfg.get("size_constraints") or {}).get("max_resources_per_entity")
+    return (
+        f"- grouped by {cfg.get('group_by_attributes')}, priority {cfg.get('priority')}, "
+        f"max {cap} servers per wave, seed {cfg.get('seed')}"
+    )
+
+
+def migration_plan_to_business_case(pkg: MigrationPlanPackage) -> str:
+    lines = [
+        f"# AWS Transform Migration Plan - {pkg.wave or 'wave'}",
+        "",
+        "## Structured facts (parsed from the wave-planning export)",
+        "",
+        f"### Applications ({len(pkg.apps)})",
+    ]
+    for a in pkg.apps:
+        mg = pkg.move_groups.get(a["id"] or "", "n/a")
+        lines.append(
+            f"- {a['name']} [{a['id']}]: strategy={a['strategy']}, env={a['environment']}, "
+            f"{a['server_count']} servers, move group {mg}, confidence {a['confidence']}, "
+            f"priority rank {a['priority_rank']}"
+        )
+    if pkg.databases:
+        lines += ["", f"### Database components ({len(pkg.databases)})"]
+        lines += [f"- {d['name']} [{d['id']}]: strategy={d['strategy']}" for d in pkg.databases]
+
+    lines += ["", f"### Servers in {pkg.wave or 'the wave'} ({len(pkg.servers)})"]
+    for s in pkg.servers:
+        lines.append(
+            f"- {s['name']} ({s.get('ip')}): {s.get('os')}, planned instance "
+            f"{s.get('instance_type')}, observed {s.get('cores'):.0f} cores / "
+            f"{s.get('ram_gib')} GiB. CPU avg {_pct(s.get('cpu_avg'))} peak {_pct(s.get('cpu_peak'))}, "
+            f"mem avg {_pct(s.get('mem_avg'))} peak {_pct(s.get('mem_peak'))}. "
+            f"app={s.get('app_name')}, move group={s.get('move_group')}"
+            if s.get("cores") else f"- {s['name']}: planned instance {s.get('instance_type')}"
+        )
+
+    findings = plan_sizing_findings(pkg)
+    if findings:
+        head = f"### Plan sizing shortfalls (auto-derived, {len(findings)} of {len(pkg.servers)} servers)"
+        lines += ["", head]
+        for f_ in findings:
+            lines.append(
+                f"- {f_['server']}: plan assigns {f_['instance_type']} but "
+                + "; ".join(f_["shortfalls"])
+                + f" (peak CPU {_pct(f_['cpu_peak'])}, peak mem {_pct(f_['mem_peak'])})"
+            )
+
+    rate = plan_run_rate(pkg)
+    if rate:
+        line = f"- on-demand run-rate of the {len(pkg.servers)} planned instances: ${rate:,.2f}/month"
+        lines += ["", "### Derived cost basis (arithmetic, from the planned instance types)", line]
+
+    v = (pkg.audit.get("validator_results") or {}) if pkg.audit else {}
+    if v:
+        lines += ["", "### Plan validators"]
+        lines += [f"- {k}: {val}" for k, val in v.items()]
+    cfg = (pkg.audit.get("config") or {}) if pkg.audit else {}
+    if cfg:
+        lines += [
+            "",
+            "### Plan configuration",
+            _plan_config_line(cfg),
+        ]
+    if pkg.citations:
+        src = {c["source"] for c in pkg.citations.values() if c.get("source")}
+        lines += ["", "### Provenance",
+                  f"- {len(pkg.citations)} entities cited from: {', '.join(sorted(src))}"]
+    return "\n".join(lines) + "\n"
+
+
+# The wave-plan artifacts the parser above needs, by fileMetadata.path prefix.
+PLAN_ARTIFACTS = (
+    "mgn_import", "enriched_inventory", "applications", "apps_to_move_groups", "citations", "audit"
+)
+ARTIFACT_CACHE = ".transform_cache"
+
+
+def read_migration_plan_from_mcp(workspace, job_id: str, dest: str | Path | None = None):
+    """Pull the wave plan straight out of the Transform workspace. Nothing about the estate is
+    hard-coded: the artifacts, their ids and their contents all come from the service."""
+    root = Path(dest or Path(ARTIFACT_CACHE) / job_id)
+    workspace.fetch_all(job_id, root, names=PLAN_ARTIFACTS)
+    return read_migration_plan(root)
+
+
+def business_case_from_mcp(workspace, job_id: str, dest: str | Path | None = None) -> str:
+    return migration_plan_to_business_case(read_migration_plan_from_mcp(workspace, job_id, dest))
+
+
+def load_business_case(path: str | Path) -> str:
+    """Auto-detect a migration plan (MGN import CSV), a discovery export (server_inventory.csv) or a
+    Transform assessment (PPTX/XLSX/PDF), and flatten any of them into the prose blob
+    `extract_contract` takes."""
+    root = _as_dir(path)
+    if _one(root, "mgn_import*.csv"):
+        return migration_plan_to_business_case(read_migration_plan(root))
     if (root / "server_inventory.csv").is_file() or list(root.glob("**/server_inventory.csv")):
         return discovery_to_business_case(read_discovery(root))
     return to_business_case(read_assessment(root))
@@ -463,7 +702,7 @@ def load_business_case(path: str | Path) -> str:
 def main(argv: list[str] | None = None) -> int:
     argv = argv or sys.argv[1:]
     if not argv:
-        print("usage: python -m tools.transform_ingest <assessment.zip | discovery.zip | dir>")
+        print("usage: python -m tools.transform_ingest <plan | assessment.zip | discovery.zip | dir>")
         return 1
     print(load_business_case(argv[0]))
     return 0
@@ -471,3 +710,23 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def wave_sizing(pkg: MigrationPlanPackage) -> list[dict]:
+    """What the plan would actually launch, per server, so the policy engine can rule on it."""
+    out = []
+    for s in pkg.servers:
+        vcpu, gib = INSTANCE_SPEC.get(s.get("instance_type") or "", (None, None))
+        out.append({
+            "name": s.get("name"), "instance_type": s.get("instance_type"),
+            "vcpu": vcpu, "ram_gib": gib,
+        })
+    return out
+
+
+def wave_step_params(pkg: MigrationPlanPackage) -> dict:
+    """What the deterministic steps need, taken from the plan instead of typed in by hand."""
+    return {
+        "source_server_ids": [s["name"] for s in pkg.servers if s.get("name")],
+        "wave": pkg.wave,
+    }

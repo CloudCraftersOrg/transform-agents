@@ -1,0 +1,13 @@
+mgn:app:name,mgn:launch:nic:0:private-ip:0,mgn:server:fqdn-for-action-framework,mgn:server:tag:hostname,mgn:server:tag:vcentername,mgn:server:tag:vcenteruuid,mgn:server:tag:vmmoref,mgn:server:tag:vmname,mgn:server:tag:vmuuid,mgn:server:user-provided-id,mgn:wave:name,mgn:launch:instance-type,mgn:launch:placement:tenancy,mgn:server:platform
+app_contoso_scoreboard,10.70.1.32,10.70.1.32,mq-01,,,import_0705e40e-dd07-5423-b3ca-e8cea03e8c1c,mq-01,,mq-01,Wave 0,t3a.nano,default,Linux
+app_contoso_scoreboard,10.70.1.51,10.70.1.51,EC2AMAZ-K9LQ97Q.WORKGROUP,,,import_0b6b01c5-d120-5bce-8c8f-d8a57805bc35,EC2AMAZ-K9LQ97Q.WORKGROUP,EC2C092C-944A-88FC-A700-62CCC761E24C,EC2AMAZ-K9LQ97Q.WORKGROUP,Wave 0,t2.small,default,Windows
+app_contoso_scoreboard,10.40.0.125,10.40.0.125,EC2AMAZ-HVB61P6.WORKGROUP,,,import_3e51316c-c467-5519-b24b-939f6f02b8d7,EC2AMAZ-HVB61P6.WORKGROUP,EC2B0476-7DB8-9E13-9568-10C469880EC3,EC2AMAZ-HVB61P6.WORKGROUP,Wave 0,c5a.large,default,Windows
+app_project_nami,10.40.0.108,10.40.0.108,ip-10-40-0-108.ec2.internal,,,import_44784c54-26eb-5f62-98a6-b1770a879c26,ip-10-40-0-108.ec2.internal,,ip-10-40-0-108.ec2.internal,Wave 0,c5a.large,default,Linux
+app_contoso_scoreboard,10.70.1.31,10.70.1.31,cache-01,,,import_4d2ba2dd-1c65-54c9-8961-706f9bc2c716,cache-01,,cache-01,Wave 0,t3a.nano,default,Linux
+app_contoso_scoreboard,10.70.1.33,10.70.1.33,nfs-01,,,import_7a60d1e0-995a-53c0-84e3-58df40793c90,nfs-01,,nfs-01,Wave 0,t3a.nano,default,Linux
+app_contoso_scoreboard,10.70.1.41,10.70.1.41,ci-01,,,import_99b69105-fed0-5c04-8b6a-54651a9c3e47,ci-01,,ci-01,Wave 0,t3a.micro,default,Linux
+app_contoso_scoreboard,10.70.1.22,10.70.1.22,finance-batch-01,,,import_a30b55c1-0587-5029-839d-71f30905225f,finance-batch-01,,finance-batch-01,Wave 0,t3a.nano,default,Linux
+app_project_nami,10.40.10.96,10.40.10.96,ip-10-40-10-96.ec2.internal,,,import_a8961f84-8e64-5327-9ea6-a9cdcb181127,ip-10-40-10-96.ec2.internal,,ip-10-40-10-96.ec2.internal,Wave 0,c5a.large,default,Linux
+app_contoso_catalog,10.50.0.232,10.50.0.232,ip-10-50-0-232.ec2.internal,,,import_bf97cd90-d6c9-550e-9ca9-4bea1c402677,ip-10-50-0-232.ec2.internal,,ip-10-50-0-232.ec2.internal,Wave 0,t3a.micro,default,Linux
+app_contoso_scoreboard,10.70.1.21,10.70.1.21,catalog-svc-01,,,import_da2c6743-6a4f-54db-9c8d-5227933d64fd,catalog-svc-01,,catalog-svc-01,Wave 0,t3a.nano,default,Linux
+app_contoso_catalog,10.50.10.208,10.50.10.208,ip-10-50-10-208.ec2.internal,,,import_e0b56d26-039f-508a-af2f-774aba6ec4f8,ip-10-50-10-208.ec2.internal,,ip-10-50-10-208.ec2.internal,Wave 0,m7a.medium,default,Linux

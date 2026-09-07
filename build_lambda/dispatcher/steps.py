@@ -11,6 +11,11 @@ from tools.spec import DecisionContract
 # Dispatcher registry. deploy_lza stays registered even when LZA is off: it just never dispatches.
 DETERMINISTIC_STEPS = (
     "deploy_lza",
+    "initialize_mgn",
+    "resize_replication_server",
+    "probe_apps",
+    "mgn_status",
+    "apply_remediation",
     "start_replication",
     "launch_test",
     "cutover",
@@ -116,7 +121,12 @@ class Dispatcher:
             decision: Decision = evaluate_policy(guard, ctx.contract)
             if not decision.allowed:
                 raise StepRejected("; ".join(decision.reasons))
-        result = self._registry[name](ctx)
+        try:
+            result = self._registry[name](ctx)
+        except StepRejected:
+            raise
+        except Exception as e:  # noqa: BLE001 - a step failure is remediation's input, not a crash
+            return {"error": f"{type(e).__name__}: {e}"}
         if not self._ledger.put(key, result):
             # a concurrent invocation already recorded this step; return the stored result
             return self._ledger.get(key) or result
@@ -154,10 +164,10 @@ class LambdaInvokingDispatcher:
         )
         raw = resp["Payload"].read()
         if resp.get("FunctionError"):
-            raise RuntimeError(f"step Lambda error: {raw.decode(errors='replace')}")
+            return {"error": raw.decode(errors="replace")}
         body = json.loads(raw)
         if body.get("rejected"):
             raise StepRejected(body["reason"])
         if not body.get("ok"):
-            raise RuntimeError(f"step Lambda returned failure: {body}")
+            return {"error": body.get("reason") or str(body)}
         return body["result"]

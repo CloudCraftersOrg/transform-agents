@@ -25,3 +25,23 @@ output "step_dispatcher_function" {
 # Feed these into the runtime as env: WAVE_STATE_TABLE, DECISION_LOG_TABLE, BEDROCK_GUARDRAIL_ID,
 # STEP_DISPATCHER_FUNCTION (= step_dispatcher_function above; a name works too, ARN is unambiguous).
 # Leave STEP_DISPATCHER_FUNCTION unset to run steps in-process instead (single-container mode).
+
+output "hitl_task_table" {
+  value = aws_dynamodb_table.hitl_tasks.name
+}
+
+output "session_table" {
+  value = aws_dynamodb_table.agent_sessions.name
+}
+
+output "escalation_topic_arn" {
+  value = try(aws_sns_topic.escalations[0].arn, "")
+}
+
+output "harness_role_arn" {
+  value = aws_iam_role.harness.arn
+}
+
+output "gateway_role_arn" {
+  value = try(aws_iam_role.gateway[0].arn, "")
+}

@@ -124,18 +124,19 @@ transition in `put_wave`; `DynamoDbStateStore` is the same interface, for Sprint
 ## Dispatcher
 
 `dispatcher/steps.py::Dispatcher`. Registry of deterministic steps (`deploy_lza`,
-`start_replication`, `launch_test`, `cutover`, `rollback`, `finalize`). Idempotent by
-`(wave_id, step_id)`. Re-evaluates policy server-side via the `guard: Action`. `deploy_lza` stays
+`initialize_mgn`, `resize_replication_server`, `start_replication`, `launch_test`,
+`cutover`, `rollback`, `finalize`).
+Idempotent by `(wave_id, step_id)`; a step that raises is returned as `{"error": ...}` and
+is **not** recorded, so a retry re-executes it. Re-evaluates policy server-side via the `guard: Action`. `deploy_lza` stays
 registered even when LZA is off: it simply never gets dispatched.
 
 ## Orchestrator
 
-`agents/orchestrator.py`. Agentic surface = `route(model, situation) -> str`: given a situation,
-pick a tool from `TOOL_CATALOG` (the same path the bake-off scores). Everything else is the
-deterministic layer, wrapped in the `Orchestrator` class, which **only holds** `store`,
-`dispatcher`, `hitl` and the specialists (agent-as-tool) — **no AWS API**:
+`agents/orchestrator.py`. The **deterministic layer**: the state machine, the policy checks and
+the wave sequence. The agentic surface lives in `agents/tools.py` + `agents/agentic.py`; this class
+is what `run_migration_wave` calls. It **only holds** `store`, `dispatcher`, `hitl` and the
+specialists (agent-as-tool) — **no AWS API**:
 
-- `decide(situation)` — routes and writes the choice to the `decision_log`.
 - `check(action, wave_id)` — `evaluate_policy`; on deny it writes `policy_denial`, and if the action
   falls under `modernization_unsupported` it **auto-escalates** (intent deliverable 5: declare the
   limit).
@@ -145,6 +146,26 @@ deterministic layer, wrapped in the `Orchestrator` class, which **only holds** `
 - `delegate(which, objective)` — invokes the specialist; a clear `NotImplementedError` if it isn't
   wired yet.
 - `request_approval` / `escalate` / `wave_digest` (digest from the store, not from MGN).
+- `_clear_blocker(...)` — AWS Transform stops a wave on prerequisites it cannot satisfy
+  itself and states them in prose it rewrites each turn, so `BLOCKERS` matches on terms
+  that must co-occur rather than on a phrasing. A match dispatches the step that clears it
+  (policy-checked, idempotent) and replies with the exact phrase Transform asked for. A
+  refusal is published as a job artifact and escalated — never talked past.
+- `_classify_gate(...)` — AWS Transform advances a job through dozens of conversational gates
+  (accept these replication settings? Static or Dynamic IP? which staging disk type?). The agent
+  decides each one autonomously: a plain progression option (`ADVANCE_OPTIONS`) is taken as-is;
+  an either/or configuration choice goes to the model bounded to the offered strings, told to pick
+  the AWS-recommended, reversible, low-cost default. It escalates only on a genuine judgement call
+  — a `STOP_SIGNAL` (destructive / irreversible / safety-skipping), a `MANUAL_BLOCKER` (needs
+  console access), the cutover when the plan failed the contract, or a gate the model itself
+  returns `ESCALATE` on. `_chat_is_stalled(...)` catches the other failure mode: the same option
+  chosen three times with no change means a step outside the agent (an unreachable source estate,
+  agents that never register) has to complete first. Before handing that to a person it
+  dispatches `resize_replication_server` — one shared replication server carries the whole wave,
+  and on a burstable type its CPU credits drain mid-sync until agents start failing to connect.
+  The step only acts on that exact signature (`FAILED_TO_CONNECT_AGENT_TO_REPLICATION_SERVER`
+  present *and* the template still burstable), so a stall with any other cause still reaches a
+  human with a `workflow stalled` record.
 
 `build_orchestrator(model, contract, *, store, dispatcher, hitl, clock, specialists=...)`.
 
@@ -153,8 +174,9 @@ Walks `contract.steps` (`precheck → interpret → replicate → test → cutov
 advances state through the transition table, and persists `completed_steps` step by step.
 **Resumable, never blocks:** at `replicate` it dispatches `start_replication` and returns `WAITING`
 (EventBridge re-invokes it; re-entering picks up where it left off). A red verdict at `test`/`parity`
-triggers a rollback and returns `ROLLED_BACK`. Interpreter failing to converge or cutover blocked by
-policy → `ESCALATED`. `require_contract_approval=True` = **mode 1** (HITL gate on the derived
+triggers a rollback and returns `ROLLED_BACK`. Interpreter failing to converge, cutover blocked by
+policy, a Transform gate that needs human judgement, or a workflow that stalls on something outside
+the agent → `ESCALATED`. `require_contract_approval=True` = **mode 1** (HITL gate on the derived
 contract before dispatching); `False` = autonomous **mode 2**. `python -m evals.wave_demo` runs a
 mode-2 wave with fakes and prints the `decision_log`.
 
@@ -226,7 +248,8 @@ full schema doesn't change the signature.
 - `agents/interpreter.py::generate_lza_config(objective, model, spec=...)` — `converge` with
   `validate_lza_config` as the oracle, ≤5 iterations, never touching AWS. `build_interpreter(model)`
   yields the *agent-as-tool* callable `delegate_interpreter(objective, spec)`.
-- `evals/bakeoff/` — `cases.jsonl` (24 cases, covering all 9 tools in `TOOL_CATALOG`),
+- `evals/bakeoff/` — `cases.jsonl` (24 cases, covering all 8 tools the deployed agent has;
+  the catalog is derived from `agents/tools.py`, so the eval cannot drift away from it),
   `run.py::score(model, cases) -> Report`. Without `--model`: validates the case file. With
   `--model bedrock:<id>`: scores tool correctness per case; exits with code 2 if `accuracy < 90%`
   (the plan's threshold for switching the Orchestrator to Haiku).
@@ -241,6 +264,201 @@ full schema doesn't change the signature.
   only programmed human gate is `approve_derived_contract` — approving the derived contract (ten
   lines with their citations), not signing off on the business case.
 
+## Application sanity check — what the cutover is judged against
+
+`issue_verdict` on an empty diff returns **green**. Nothing populated `test_diffs` in the deployed
+path, so the QA gate approved every cutover having tested nothing. That is now closed at the point
+where the vacuous verdict would have been issued:
+
+- **`precheck`** asks the engineer, through a `app_probe_spec` HITL task, for what "working" looks
+  like: a URL per application, the expected response, and — for anything needing a login — a
+  **Secrets Manager ARN**. Never the credential: the wave inputs and the `decision_log` are both
+  persisted and rendered in the console. The step (`dispatcher/handler.py::_probe_apps`) resolves
+  the reference at the moment of use and returns only signals that are safe to keep — status code,
+  latency, a SHA-256 fingerprint of the body, never the body.
+- The pre-migration observation is written to the `decision_log` as `app_baseline`, so a resumed
+  wave keeps comparing against the original rather than re-measuring an already-migrated system.
+- **`test`** probes again and diffs the two. If there is **no baseline and no explicit
+  `test_diffs`, the wave escalates instead of issuing a verdict** — refusing to judge is the whole
+  point of the gate.
+
+The probe runs from the step-dispatcher Lambda, which is not attached to a VPC: it reaches
+applications that are publicly routable. Private-only estates need the Lambda in the VPC first.
+
+**The agent works out what to check, and asks only when it cannot.** The chain is already in the
+estate: an MGN application groups source servers, a source server carries the EC2 instance its
+agent registered from, and EC2 knows that instance's public address. `discover_probe_targets`
+walks it, probes each address, and keeps only the hosts that answer - discovery by observation, so
+a machine that is not serving the application never becomes something the cutover is judged on. On
+this estate it derives three applications out of thirteen servers in 17 seconds and correctly
+leaves the message queue, cache, NFS and CI hosts out.
+
+A derived spec is recorded in the decision log marked `source: derived`, because a person reading
+the record has to be able to see that nobody supplied it. An engineer's answer always wins over
+what the agent derived. Asking is the fallback, for an estate with nothing publicly reachable.
+
+**Answering the agent, from the console.** Every question in the *Needs you* panel has a reply box
+under it. You answer in a sentence, not a form: the agent already works out *where* its
+applications answer, and what it cannot work out is what a person means by healthy - "the
+leaderboard lists teams", "the catalog shows products". The reply is recorded against the wave and
+reaches the QA verdict as the description the before/after diff is judged against. A form was the
+wrong instrument and it is gone.
+
+**The login is a reference, never a credential.** The `secret_arn` field takes a Secrets Manager
+ARN whose `SecretString` is JSON with exactly `username` and `password`; the probe resolves it at
+the moment of use and sends HTTP Basic. The name must start with `${name_prefix}/` - the runtime's
+`GetSecretValue` grant is scoped to that prefix. A secret that cannot be read, or that uses other
+key names, is reported as `login_error` on the probe result: it used to fall back to an
+unauthenticated request, which comes back 401 and reads as the application being broken, on the
+gate that decides the cutover.
+
+**One row per application, not per server.** The verdict compares an application before and after,
+so thirteen servers behind three applications are three things to check. The answer is written to
+the `decision_log`, not to the task row: a task is answered once, the log is what every later run
+reads back. Both surfaces read it through the same `_answered_probe_spec` - they used not to, and
+a wave resumed by the scheduler probed nothing while the agentic path saw the answer.
+
+## Agentic entrypoint — AgentCore Runtime + Strands
+
+`agents/agentic.py`. `BedrockAgentCoreApp` owns the `/invocations` + `/ping` contract (the
+hand-rolled HTTP server is gone) and a Strands `Agent` owns the reasoning loop. You talk to it:
+
+```bash
+aws bedrock-agentcore invoke-agent-runtime --agent-runtime-arn <arn>   --payload "$(printf '{"prompt":"why is wave-0 not progressing?"}' | base64 -w0)"   --content-type application/json --accept application/json out.json
+```
+
+**Nine tools** (`agents/tools.py`), which is the whole surface the model reasons over:
+
+| Tool | What it is for |
+|---|---|
+| `waves_in_flight` | what is still running — the scheduler wakes the agent with no wave in mind |
+| `migration_status` | wave state + what AWS Transform is asking + an MGN summary, in one read |
+| `mgn_replication_health` | MGN's own per-server view — **the ground truth when Transform's narrative disagrees** |
+| `run_migration_wave` | the deterministic wave, resumable, carrying the state machine |
+| `sanity_check_apps` | probe the applications; baseline before, judgement after |
+| `answer_transform` | reply to a Transform gate |
+| `diagnose_and_remediate` | hand a failure to the Remediation specialist (agent-as-tool) |
+| `ask_engineer` | get what only a person knows — URLs, expected responses, a secret *reference* |
+| `escalate` | hand over with a diagnosis |
+
+**`run_migration_wave` stays a tool rather than dissolving into the loop.** It carries the state
+machine and the resume point the scheduler depends on. The agent decides *when* to run a wave; it
+does not re-derive how a wave is sequenced internally.
+
+**The switch is additive.** Every payload the deterministic entrypoint understands — the
+scheduler's `{"action":"resume"}`, a direct `{"wave_id":...}`, the console's `ask` / `say` /
+`read_chat` — still routes to `agents/runtime.py` unchanged. The agentic surface has to earn its
+place before anything that works today is removed; `tools/console.py` becomes optional, not
+obsolete-by-decree.
+
+## AgentCore Harness — AWS runs the loop, the tools arrive over MCP
+
+Two ways to run the same agent, from one image. `SERVE_PROTOCOL` picks the role:
+
+| | `SERVE_PROTOCOL=HTTP` (default) | `SERVE_PROTOCOL=MCP` |
+|---|---|---|
+| Serves | `agents/agentic.py` on `:8080` | `tools/mcp_server.py` on `:8000/mcp` |
+| Runs the loop | Strands, in our container | AWS, in the Harness |
+| Conversation memory | `agent_sessions` table | Harness managed memory |
+| Who calls the tools | the Strands `Agent` | the Harness, over MCP |
+
+**The tools are not redefined for MCP.** `tools/mcp_server.py` re-publishes
+`agents.tools.build_tools` over a different transport, so there is one definition and every guard
+inside those tools is a guard the Harness inherits. `tests/test_mcp_server.py` fails if the two
+surfaces ever differ by a name, a description or a schema.
+
+**`allowedTools` is a safety control, not a token optimisation.** A Harness ships `shell` and
+`file_operations` in every session. A shell on a live migration reaches MGN and Route 53 without
+passing one dispatcher guard, so the harness allows `@transform-agents` and nothing else.
+
+### The credential chain
+
+`remoteMcp` takes a URL and static headers — it cannot SigV4-sign — and an AgentCore Runtime
+serving MCP requires SigV4 or a JWT. A bearer token would expire under an unattended agent, so the
+chain goes through a Gateway instead and every hop is IAM:
+
+```
+EventBridge → resume Lambda → InvokeHarness → Harness ──awsIam──▶ Gateway
+                                                                    │ GATEWAY_IAM_ROLE (SigV4)
+                                                                    ▼
+                                                       AgentCore Runtime (MCP) → tools
+```
+
+`HARNESS_MCP_URL` + `HARNESS_MCP_HEADERS` remain as a fallback for an MCP server that
+authenticates on a header.
+
+### Deploy
+
+```bash
+# one image, pushed once; the MCP runtime differs from the HTTP one only by environment
+aws bedrock-agentcore-control create-agent-runtime \
+  --agent-runtime-name transform_agents_mcp \
+  --agent-runtime-artifact "containerConfiguration={containerUri=<image>}" \
+  --role-arn "$(terraform output -raw runtime_role_arn)" \
+  --network-configuration '{"networkMode":"PUBLIC"}' \
+  --protocol-configuration '{"serverProtocol":"MCP"}' \
+  --environment-variables SERVE_PROTOCOL=MCP,WAVE_STATE_TABLE=...,DECISION_LOG_TABLE=...
+
+terraform apply -var mcp_runtime_arn=<arn>          # creates the gateway role
+python -m agents.gateway "$(terraform output -raw gateway_role_arn)" <mcp-runtime-arn>
+HARNESS_GATEWAY_ARN=<arn> python -m agents.harness "$(terraform output -raw harness_role_arn)"
+terraform apply -var harness_arn=<arn>              # the scheduler switches to InvokeHarness
+```
+
+`agents/gateway.py` and `agents/harness.py` are both create-or-reuse, so re-running one is how
+you redeploy it, not something to avoid.
+
+Deploying needs paired permissions the console does not hint at: `CreateHarness` also requires
+`bedrock-agentcore:CreateAgentRuntime` **and** `CreateMemory`; `UpdateHarness` requires
+`UpdateAgentRuntime` and `UpdateMemory`; and **`InvokeHarness` is checked against both
+`bedrock-agentcore:InvokeHarness` and `bedrock-agentcore:InvokeAgentRuntime` on the same ARN** —
+granting only the first is denied.
+
+Three more that cost an attempt each:
+
+- **`mcp` is a reserved gateway-target name.** `CreateGatewayTarget` rejects it outright; the
+  target here is called `tools`.
+- **Managed memory is not named what the docs say.** The execution-role sample scopes memory to
+  `memory/harness_<abbrev>_*`; the service actually creates `memory/<harnessName>-<suffix>`, so a
+  role written from the docs is denied `ListEvents` on the first invocation.
+- **Gateway tools arrive namespaced.** A tool published as `waves_in_flight` reaches the model as
+  `tools___waves_in_flight` — the target name, three underscores, the tool. `allowedTools` still
+  matches on the harness tool name (`@transform-agents`), not on this.
+
+### What the Harness does not do
+
+It does not wake anything up. A Harness sitting still does nothing, exactly like a Runtime sitting
+still; it changes *who runs the loop*, not *who starts it*. The EventBridge schedule is still the
+only reason the migration advances unattended — it now calls `InvokeHarness` instead of
+`InvokeAgentRuntime`, and `dispatcher/resume.py` keeps both paths so the switch is reversible by
+unsetting one environment variable.
+
+Ticks share one `runtimeSessionId` per day, so the agent remembers what it tried five minutes ago
+instead of rediscovering it. `RESUME_BATCH` no longer applies on this path: the agent chooses how
+many waves to drive, having asked `waves_in_flight` first.
+
+Each new MCP runtime session is a cold microVM, so the first tool call in it pays a full Transform
+workspace walk. The derived contract is read back from `contract#<jobId>` rather than re-derived,
+which is what keeps that cost to a walk instead of a walk plus an extraction loop. `stopReason` is reported on every turn: `max_iterations_exceeded`
+looks exactly like success until you read it, and that is how a stalled migration goes unnoticed.
+
+## Guards live in the tool, never in the call order
+
+Several guarantees used to hold only because `run_wave` called things in a fixed sequence. That is
+safe for a deterministic pipeline and unsafe the moment an agent picks its own order — it could
+reach `cutover` by simply never mentioning `test`. The rule now: **every guard lives inside the tool
+that performs the effect.**
+
+| Guarantee | Enforced in | Survives an agent choosing its own order |
+|---|---|---|
+| Contract policy (sizing, budget, scope) | `Dispatcher.dispatch` re-evaluates `evaluate_policy` server-side | yes, already |
+| Legal state transitions | `put_wave` → `assert_legal` | yes, already |
+| **The migration was actually tested** | `dispatcher/handler.py::_cutover` queries the `decision_log` for a green `test` verdict **judged on a non-empty diff**, and raises `StepRejected` otherwise | yes, now |
+| Nothing destructive answered autonomously | `_classify_gate` `STOP_SIGNALS` / `MANUAL_BLOCKERS` | still order-independent, but lives in the orchestrator — move it into the tool when the loop lands |
+
+The cutover check **fails closed**: with no `DECISION_LOG_TABLE` configured it refuses. That is the
+right default for an irreversible action, and it means an in-process run has to wire the log too.
+
 ## Autonomy scorecard
 
 `evals/scorecard.py`. Section 3 of the plan, computed straight from the `decision_log` a run
@@ -251,6 +469,7 @@ contract=None, known_healthy=None, cost_by_wave=None) -> Scorecard`:
 |---|---|---|
 | Unintervened success rate | `unintervened_success_rate` | just the store |
 | Escalations per run | `escalations_per_run` | just the store |
+| Gate autonomy rate | `gate_autonomy` | just the store — share of AWS Transform's conversational gates the agent answered itself, split into plain progression vs. model-chosen configuration, with the reason for every gate it *did* hand to a human. A stall (the workflow blocked on something outside the agent) is counted separately: it is not a decision the agent declined |
 | Interpreter convergence rate + avg iterations | `interpreter_convergence` | `interpreter_convergence` log entries |
 | Resolved vs. escalated, learning reuse rate | `remediation_outcomes` | `remediation_outcome` log entries |
 | Constraint adherence | `constraint_adherence` | a `DecisionContract` — synthesizes the smallest action that violates each constraint and confirms `evaluate_policy` catches it (the generalized version of the plan's 3 FBCTF traps, works on any contract) |
@@ -295,38 +514,140 @@ tests/        181 tests, all offline (FakeModel for the LLM, moto for DynamoDB, 
 
 ## Current state
 
-**Implemented and tested offline** (`FakeModel` for the LLM, `moto` for DynamoDB, fake boto3 clients
-for MGN/Route53/SSM/logs): the entire decision path — typed contract + loader, closed vocabulary,
-policy engine + traps, state machine, `converge` Trust loop, `validate_lza_config` +
-`validate_iac` oracles, `escalate` + HITL queue, ingest of both a Transform assessment and a
-discovery export, with the PDF Financial Summary as the authoritative cost basis (`transform_ingest`)
-+ extraction `business_case → DecisionContract` (fixtures: synthetic FBCTF; real `vmware-001`,
-`mixed-estate-001`, `discovery-001`), Interpreter (`generate_lza_config`
-for rehost + `generate_modernization_iac` for the verified container artifact),
-Orchestrator (`route` + resumable mode-1/2 `run_wave` producing both approaches in one wave, no AWS APIs), all
-five roster agents, Remediation's **learning loop**, FinOps aligned to Transform's cost basis
-(per-resource `monthly_usd` + RI-aware run-rate), the **autonomy scorecard** (incl.
-`diagnosis_precision` over the injected-failure catalog), bake-off (24 cases + `score`).
+**Running on AWS.** The Orchestrator is deployed as an AgentCore Runtime container against the
+live `EPAM-PoC-Business-Case` workspace and the `VmwareMigration-2026-09-02-2050` job. In one
+invocation it walks the job's artifacts over the Transform MCP, derives the decision contract
+from the wave plan, checks every instance the plan would launch against it, and drives the job
+through its chat. Nothing about the estate is configured.
 
-**Connective layer — written and tested with mocks, needs credentials to run for real:**
-`DynamoDbStateStore` + `DynamoDbLedger` (moto tests), `tools/aws.py` MGN read / jobs / logs / SSM
-wrappers with allow-list enforcement (fake-client tests), `dispatcher/handler.py` — the step Lambda
-with real step functions (`start_replication` → MGN, `cutover`/`rollback` → Route53) + cross-invocation
-idempotency + structured policy-rejection, `dispatcher/steps.py::LambdaInvokingDispatcher` — the
-Runtime-side adapter that invokes that Lambda (name or ARN), `agents/runtime.py` — the AgentCore HTTP
-shell + resumable `invoke`, wired to either the Lambda (`STEP_DISPATCHER_FUNCTION` set) or in-process
-steps, `StrandsModel` (Bedrock, agent cache + guardrail id), `tools/transform_mcp.py` (stdio +
-AgentCore Gateway paths), `infra/*.tf`.
+What the agent has actually decided against the real workspace:
 
-**Still open (shape only knowable against credentials):** exact AWS Transform *MCP* tool schemas
-(the file ingest handles the console export; MCP may return the same data structured) and the real
-MGN payloads — the wrappers are built against the documented APIs and adjust on first real response.
-Also pending real infra: `terraform apply`, `agentcore configure/launch`, the S3 Vectors Knowledge
-Base, `validate_iac` (needs the `terraform` binary), `playwright_run`, and wiring
+- **Withheld the Wave 0 cutover.** The plan's EC2 recommendations were generated with *Average*
+  sizing while the enriched inventory records peak CPU of 94-100%; 9 of 12 servers failed the
+  contract. The denial went to a human gate instead of proceeding.
+- **Chose to fix the plan rather than override the denial.** With `resize_to_peak` approved it
+  asked Transform to regenerate the recommendations on peak utilisation. Transform re-issued all
+  12 servers as `c5a.large`, and the re-derived plan then passed the same contract unchanged.
+- **Detected and tried to clear an external prerequisite.** Transform blocks the wave until AWS
+  MGN is initialized in the target account. The agent recognised the blocker, dispatched
+  `initialize_mgn`, and — when MGN refused — published the evidence as a job artifact and
+  escalated. It never answered `continue rehost` on work it had not done.
+
+**Open, and not fixable from this repo:** MGN will not activate in `us-east-1` for this account.
+`InitializeService` returns 200 and no-ops, and every MGN write is refused with an
+`AccessDeniedException` carrying an empty message. The same call in `us-west-2` initializes the
+account and creates the default replication template, so this is neither IAM nor the code path.
+AWS Transform hits the identical wall and asks for an administrator, so the rehost stops here
+until the service is turned on from the console (or in another region).
+
+**Still offline-only:** the S3 Vectors Knowledge Base, `playwright_run`, and wiring
 Remediation's `apply_action` to `ssm_run_command`.
+## Running on AgentCore
 
-**Next:** the experiment itself — runs in the three modes (baseline / assisted / autonomous),
-wall-clock bound.
+The Orchestrator runs as a single AgentCore Runtime container. `POST /invocations` with just
+`{"wave_id": "..."}`: it discovers the Transform workspace, ingests the wave plan from the job's
+artifacts, derives the decision contract from that prose, and runs the wave. Nothing about the
+estate is configured.
+
+```bash
+aws bedrock-agentcore invoke-agent-runtime --agent-runtime-arn <arn>   --payload "$(printf '{"wave_id":"w1"}' | base64 -w0)"   --content-type application/json --accept application/json out.json
+```
+
+**Unattended operation.** An EventBridge schedule fires every 5 minutes at a small
+`{name_prefix}-resume` Lambda, which calls `InvokeAgentRuntime` with `{"action": "resume"}`.
+A **native** Lambda target on purpose: the `aws-sdk:bedrockagentcore:invokeAgentRuntime`
+universal target is accepted at apply time and then never delivers — the schedule fires, the
+role is correct, and no invocation reaches the runtime. That Lambda ships in the same zip as
+the step dispatcher with a different handler; the separation that matters is the IAM role, not
+the artifact — it can wake the Orchestrator and nothing else, while the step dispatcher, which
+*can* mutate MGN and Route 53, deliberately cannot invoke the runtime.
+That payload carries no wave id: the runtime reads `waves_in_flight()` and drives them, skipping
+anything DONE / FAILED / ROLLED_BACK / ESCALATED — escalated means a person owes an answer, so
+auto-resuming it would defeat the gate.
+
+**That gate is only as good as the escalation that sets it.** `Orchestrator.escalate` wrote the
+decision log and left the wave's status alone, so five of the six ways a wave escalates never took
+it out of the in-flight set. One wave rediscovered the same Transform stall, re-published a stall
+record and re-escalated on every five-minute tick — **102 rounds** before anyone read the log.
+Marking the wave is now part of escalating rather than a step each call site has to remember, for
+the same reason the guards live inside the tools: a rule enforced by convention is not enforced. The batch is bounded (`RESUME_BATCH`, default 2) because
+one invocation has a request timeout and each wave costs a full MCP walk, and waves are ordered
+**least-recently-serviced first**: resuming stamps `updated_at`, so ordering by newest would
+hand every tick back to the same waves and starve the rest. Create it by passing `runtime_arn`
+to `terraform apply`; without it the schedule is not created at all and nothing runs unattended.
+
+`{"read_chat": true}` returns the agent's own chat thread, the job status and the artifact
+listing without sending anything — a conversation is single-flight, so any probe that writes is
+what makes the next real message fail with *"a message is already being processed"*.
+
+The derived contract is cached in the `decision_log` under `contract#<jobId>`, not under the
+wave. Waves come and go; the plan they are derived from does not, so a re-run reuses the same
+contract instead of asking the model to invent it again — extraction does not produce a
+byte-identical answer twice, and a thinner contract silently weakens every gate downstream.
+
+Redeploying is image push + `update-agent-runtime`. **Pass `--environment-variables` every
+time**: the update replaces the runtime configuration, and omitting them silently clears the
+whole environment.
+
+Four things about the Transform MCP are not obvious and cost a day if you rediscover them:
+
+**`load_instructions` is a hard gate.** Every job-scoped call returns `INSTRUCTIONS_REQUIRED` until
+it is called for that job. `TransformWorkspace` does it automatically. Those instructions are
+service-supplied text that reaches the model, which is why the Bedrock Guardrail exists.
+
+**Workspace access is per assumed-role *session*, not per role.** Transform keys collaborators on
+`<role-id>:<session-name>` and refuses role ARNs, bare role ids and wildcards. AgentCore mints a
+fresh session name (`BedrockAgentCore-<uuid>`) on every invocation, so a collaborator entry can
+never match. The runtime therefore re-assumes its own role under a fixed `TRANSFORM_SESSION_NAME`
+(`stable_session_env()` in `tools/transform_mcp.py`) and hands those credentials to the MCP
+subprocess. Grant that identity once:
+
+```
+manage_collaborator(workspaceId, action="put",
+                    userId="<runtime-role-id>:transform-agent", role="CONTRIBUTOR")
+```
+
+The identity must have called Transform at least once before it can be added ("has not logged in to
+tenant"), so the order is: deploy, invoke once (it 403s), add the collaborator, invoke again.
+
+**Chat threads are per-identity; artifacts are not.** Nothing the agent says in chat is visible
+in the console, because the human and the runtime hold different Transform identities and see
+different threads of the same job. Decision records are therefore *published as job artifacts*
+(`upload_artifact`), which every collaborator shares. File names must be unique, so each record
+carries a timestamp.
+
+**A migration job cannot be restarted.** `control_job("start")` answers HTTP 400 *"job of this
+type cannot be restarted"*, and `AWAITING_HUMAN_INPUT` is not a stalled job — it is the job
+asking a question in chat. Both statuses are driven by answering, not by starting.
+
+AgentCore Gateway is **not** an option for this MCP: its `mcpServer` target requires an
+`https://` endpoint and the AWS Transform MCP ships as a stdio package. The Dockerfile installs it
+into the image instead, so the runtime never reaches PyPI.
+
+## Operator console
+
+`tools/console.py` — a local page over the deployed agent, because a wave is a narrative and a
+terminal is a bad place to read one. Zero new dependencies: stdlib HTTP server, boto3, one HTML
+file. It reads the same DynamoDB tables the agent writes, so there is no second source of truth.
+
+```bash
+AWS_PROFILE=<profile> AGENT_RUNTIME_ARN=<runtime arn> uv run python -m tools.console
+```
+
+- **Wave pipeline** — where the wave sits in the state machine, which steps are behind it, and
+  whether it left the pipeline through an off-ramp (`ESCALATED`, `ROLLING_BACK`, `FAILED`).
+- **Decision log** — every entry oldest-first, coloured by kind, each with its raw `detail`. This is
+  the audit trail the scorecard is computed from, not a rendering of it.
+- **Run the agent** — invokes the runtime with `{wave_id, approve}`, the same call the scheduler
+  makes, so the console cannot drive a wave down a path an unattended run could not also take. The
+  gate checkboxes are the HITL approvals (`proceed_wave_cutover`, `resize_to_peak`).
+- **AWS Transform job** — job status, the question Transform is currently blocked on, and the
+  decision records the agent has published to the job's artifacts.
+- **Agent output** — the runtime log group with the MCP server and botocore chatter filtered out.
+  Tailing it raw looks empty because roughly nine in ten lines are theirs, not the agent's.
+
+A fresh boto3 session is built per call: the console outlives an SSO token, and a cached session
+would keep serving errors after a re-login.
 
 ## Usage
 
@@ -339,8 +660,8 @@ uv run python -m evals.wave_demo
 
 - **Live models** — `uv sync --extra agents`, then `evals/bakeoff/run.py --model bedrock:<id>` and
   `diagnosis_precision(StrandsModel(...), contract)`.
-- **Infra** — `cd terraform && terraform init` (S3 backend `transform-agents-tfstate`, key
-  `poc/terraform.tfstate`, S3-native lock), then
-  `terraform apply -var business_case_bucket=<bucket>`, then `agentcore configure` /
-  `agentcore launch` against `Dockerfile` + `agents/runtime.py`, passing the `terraform output`
-  values as env.
+- **Infra** — `cd terraform && terraform init` (Terraform >= 1.10; S3 backend
+  `transform-agents-tfstate`, key `poc/terraform.tfstate`, S3-native lock), then
+  `terraform apply -var business_case_bucket=<bucket> -var lambda_bucket=<bucket>`, then
+  `agentcore configure` / `agentcore launch` against `Dockerfile` + `agents/runtime.py`,
+  passing the `terraform output` values as env.

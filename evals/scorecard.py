@@ -196,7 +196,7 @@ def diagnosis_precision(
     for f in failures:
         expected = f["expected_action"]
 
-        def apply_action(a: str, _exp: str = expected) -> dict:
+        def apply_action(a: str, _target: dict, _exp: str = expected) -> dict:
             return {"resolved": a == _exp}
 
         r = remediate(
@@ -221,10 +221,62 @@ def cost_per_successful_run(cost_by_wave: dict[str, float], store: StateStore, w
 
 
 @dataclass
+class GateAutonomy:
+    """AWS Transform advances a job through conversational gates. This is the share the agent
+    answered itself. `stalled` and `prerequisites_cleared` are counted separately: a stall is the
+    workflow blocked on something outside the agent, not a decision it declined to make."""
+
+    advanced_plain: int
+    advanced_by_model: int
+    escalated: int
+    stalled: int
+    prerequisites_cleared: int
+    escalation_reasons: list[tuple[str, int]] = field(default_factory=list)
+
+    @property
+    def decided(self) -> int:
+        return self.advanced_plain + self.advanced_by_model
+
+    @property
+    def rate(self) -> float:
+        total = self.decided + self.escalated
+        return self.decided / total if total else 0.0
+
+
+def gate_autonomy(store: StateStore, wave_ids: list[str]) -> GateAutonomy:
+    """Read straight off the decision_log a real run already writes - the summaries are the record,
+    so this measures what the agent did, not what it was configured to do."""
+    plain = by_model = escalated = stalled = cleared = 0
+    reasons: dict[str, int] = {}
+    for wid in wave_ids:
+        for e in store.decisions(wid):
+            s = e.summary
+            if "autonomously chose" in s:
+                if "model chose the safe default" in s:
+                    by_model += 1
+                else:
+                    plain += 1
+            elif e.kind == "hitl" and "a human decision is needed" in s:
+                escalated += 1
+                why = (e.detail or {}).get("reason") or s
+                reasons[why[:100]] = reasons.get(why[:100], 0) + 1
+            elif e.kind == "hitl" and "workflow has stalled" in s:
+                stalled += 1
+            elif e.kind == "remediation_outcome" and "cleared the" in s:
+                cleared += 1
+    return GateAutonomy(
+        advanced_plain=plain, advanced_by_model=by_model, escalated=escalated,
+        stalled=stalled, prerequisites_cleared=cleared,
+        escalation_reasons=sorted(reasons.items(), key=lambda kv: -kv[1]),
+    )
+
+
+@dataclass
 class Scorecard:
     total_runs: int
     unintervened_success_rate: float
     escalations_per_run: float
+    gate_autonomy: GateAutonomy
     interpreter: ConvergenceStats
     remediation: RemediationStats
     constraint_adherence: AdherenceResult | None
@@ -266,6 +318,7 @@ def build_scorecard(
         total_runs=len(wave_ids),
         unintervened_success_rate=unintervened_success_rate(store, wave_ids),
         escalations_per_run=escalations_per_run(store, wave_ids),
+        gate_autonomy=gate_autonomy(store, wave_ids),
         interpreter=interpreter_convergence(store, wave_ids),
         remediation=remediation_outcomes(store, wave_ids),
         constraint_adherence=adherence,

@@ -3,8 +3,21 @@ from __future__ import annotations
 import uuid
 from typing import Protocol
 
-from state.models import DecisionLogEntry, WaveState
+from state.models import DecisionLogEntry, WaveState, WaveStatus
 from state.transitions import assert_legal
+
+# A wave in one of these is finished or waiting on a person - re-invoking it would either do
+# nothing or spin on something the agent already declined to decide.
+_SETTLED = frozenset({
+    WaveStatus.DONE, WaveStatus.FAILED, WaveStatus.ROLLED_BACK, WaveStatus.ESCALATED,
+})
+
+
+def _service_order(wave: WaveState) -> tuple[int, str]:
+    """Least recently serviced first. Resuming a wave stamps `updated_at`, so ordering by
+    newest would hand every tick back to the same waves and starve the rest. A wave that has
+    never run sorts ahead of everything."""
+    return (1, wave.updated_at) if wave.updated_at else (0, "")
 
 
 class StateStore(Protocol):
@@ -12,6 +25,7 @@ class StateStore(Protocol):
     def put_wave(self, wave: WaveState) -> None: ...
     def append_decision(self, entry: DecisionLogEntry) -> None: ...
     def decisions(self, wave_id: str) -> list[DecisionLogEntry]: ...
+    def waves_in_flight(self) -> list[str]: ...  # least recently serviced first
 
 
 class InMemoryStateStore:
@@ -34,6 +48,10 @@ class InMemoryStateStore:
 
     def decisions(self, wave_id: str) -> list[DecisionLogEntry]:
         return [e for e in self._log if e.wave_id == wave_id]
+
+    def waves_in_flight(self) -> list[str]:
+        live = [w for w in self._waves.values() if w.status not in _SETTLED]
+        return [w.wave_id for w in sorted(live, key=_service_order)]
 
 
 class DynamoDbStateStore:
@@ -93,6 +111,22 @@ class DynamoDbStateStore:
                 "doc": {"S": entry.model_dump_json()},
             },
         )
+
+    def waves_in_flight(self) -> list[str]:
+        """Waves a scheduled re-invocation should pick up. A scan is right here: one row per wave,
+        and only the scheduler reads all of them."""
+        live: list[WaveState] = []
+        kwargs: dict = {"TableName": self._wave_table}
+        while True:
+            resp = self.client.scan(**kwargs)
+            for item in resp.get("Items", []):
+                wave = WaveState.model_validate_json(item["doc"]["S"])
+                if wave.status not in _SETTLED:
+                    live.append(wave)
+            if "LastEvaluatedKey" not in resp:
+                break
+            kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+        return [w.wave_id for w in sorted(live, key=_service_order)]
 
     def decisions(self, wave_id: str) -> list[DecisionLogEntry]:
         out: list[DecisionLogEntry] = []

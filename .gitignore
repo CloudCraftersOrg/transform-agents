@@ -20,3 +20,11 @@ terraform/tfplan
 terraform/*.tfplan
 terraform/crash.log
 terraform/crash.*.log
+
+# lambda build artifacts
+build_lambda/
+step-dispatcher.zip
+
+# transform MCP artifact cache
+.transform_cache/
+console.log

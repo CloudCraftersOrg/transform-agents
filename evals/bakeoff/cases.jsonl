@@ -1,24 +1,27 @@
-{"id": "interpret-business-case", "prompt": "Need to interpret the business case prose and derive the decision contract.", "expected_tool": "delegate_interpreter"}
-{"id": "lza-config-missing", "prompt": "Wave w1 is in INTERPRETING and the LZA config does not exist yet.", "expected_tool": "delegate_interpreter"}
-{"id": "lza-regen-after-validator", "prompt": "The LZA validator rejected the generated config; it needs to be fixed and retried.", "expected_tool": "delegate_interpreter"}
-{"id": "iac-fargate-artifact", "prompt": "Still need to generate the Fargate IaC artifact for the web tier's modernization scenario.", "expected_tool": "delegate_interpreter"}
-{"id": "mgn-stalled", "prompt": "A source server has been stuck in stalled state in MGN for 3 hours.", "expected_tool": "delegate_remediation"}
-{"id": "replication-checksum-mismatch", "prompt": "MGN replication reports a checksum mismatch on a volume.", "expected_tool": "delegate_remediation"}
-{"id": "pipeline-access-denied", "prompt": "The test pipeline failed with AccessDenied while assuming the target role.", "expected_tool": "delegate_remediation"}
-{"id": "check-policy-before-sizing", "prompt": "About to recommend t3.large for the app; check it against the contract before locking it in.", "expected_tool": "evaluate_policy"}
-{"id": "client-asks-graviton-everywhere", "prompt": "The client is asking to move the whole stack to Graviton; need to check if that's possible.", "expected_tool": "evaluate_policy"}
-{"id": "confirm-budget-before-commit", "prompt": "The proposed sizing yields an estimated run-rate; confirm it falls within the ceiling and variance.", "expected_tool": "evaluate_policy"}
-{"id": "wave-replication-progress", "prompt": "Need to know how many servers in the wave have finished replicating.", "expected_tool": "wave_status"}
-{"id": "apps-ready-for-test", "prompt": "How many apps in wave w2 are already ready to launch tests.", "expected_tool": "wave_status"}
-{"id": "lza-validated-launch-replication", "prompt": "The LZA config passed the validator; time to launch replication.", "expected_tool": "execute_step"}
-{"id": "qa-green-advance-parity", "prompt": "Validation QA came back green; advance the wave to the parity check.", "expected_tool": "execute_step"}
-{"id": "cutover-now-config-ready", "prompt": "Everything is ready and approved; trigger the billing cutover.", "expected_tool": "execute_step"}
-{"id": "modernize-hack", "prompt": "The client is asking to modernize the app's Hack code with Transform.", "expected_tool": "escalate"}
-{"id": "interpreter-exhausted-iterations", "prompt": "The Interpreter made 5 attempts at the LZA config and none passed the validator.", "expected_tool": "escalate"}
-{"id": "approve-derived-contract", "prompt": "Before dispatching the wave, a human needs to approve the derived contract.", "expected_tool": "submit_hitl_task"}
-{"id": "mode1-human-approval-gate", "prompt": "We're in assisted mode 1: a human must approve before the agent dispatches.", "expected_tool": "submit_hitl_task"}
-{"id": "finops-run-rate-drift", "prompt": "The post-cutover run-rate is 22% above the baseline.", "expected_tool": "delegate_finops"}
-{"id": "untagged-cost-not-attributable", "prompt": "EC2 and EBS are untagged and the spend is not attributable by component.", "expected_tool": "delegate_finops"}
-{"id": "parity-red-verdict", "prompt": "The post-cutover parity test came back red; need to decide what to test.", "expected_tool": "delegate_validation"}
-{"id": "decide-test-set-for-cutover", "prompt": "Need to decide the test set for the cutover based on billing's criticality.", "expected_tool": "delegate_validation"}
-{"id": "api-diff-three-new-fields", "prompt": "An api_diff showed 3 new fields in the response; decide whether they matter.", "expected_tool": "delegate_validation"}
+{"id": "status-where-are-we", "prompt": "I want to know where wave-0 stands right now.", "expected_tool": "migration_status"}
+{"id": "status-what-is-transform-asking", "prompt": "Is AWS Transform waiting on an answer for the migration job?", "expected_tool": "migration_status"}
+{"id": "status-after-a-gap", "prompt": "Nobody has looked at this wave since yesterday. Get oriented before doing anything.", "expected_tool": "migration_status"}
+{"id": "mgn-transform-says-syncing", "prompt": "AWS Transform reports replication is progressing, but I want the infrastructure's own answer per server.", "expected_tool": "mgn_replication_health"}
+{"id": "mgn-which-servers-stalled", "prompt": "Which source servers are stalled in AWS Application Migration Service and with what error?", "expected_tool": "mgn_replication_health"}
+{"id": "mgn-are-they-ready-for-test", "prompt": "Have all twelve servers finished their initial sync and reached a state where a test launch is possible?", "expected_tool": "mgn_replication_health"}
+{"id": "run-start-the-wave", "prompt": "Start the migration for wave-0 and take it as far as it can go.", "expected_tool": "run_migration_wave"}
+{"id": "run-resume-after-wait", "prompt": "The wave returned WAITING half an hour ago. Continue it.", "expected_tool": "run_migration_wave"}
+{"id": "run-with-approval", "prompt": "A human approved proceed_wave_cutover. Apply that approval and carry the wave forward.", "expected_tool": "run_migration_wave"}
+{"id": "sanity-baseline-before", "prompt": "Before anything moves, record how the applications behave so we can compare afterwards.", "expected_tool": "sanity_check_apps"}
+{"id": "sanity-after-migration", "prompt": "The servers finished replicating. Check whether the applications still respond correctly.", "expected_tool": "sanity_check_apps"}
+{"id": "sanity-verify-a-claim", "prompt": "Someone says the billing app is fine after the move. Verify it against the applications themselves.", "expected_tool": "sanity_check_apps"}
+{"id": "transform-answer-settings", "prompt": "AWS Transform is asking whether to continue with the current replication settings. Tell it to continue.", "expected_tool": "answer_transform"}
+{"id": "transform-answer-resume", "prompt": "The MGN prerequisite is done. Tell AWS Transform to continue the rehost.", "expected_tool": "answer_transform"}
+{"id": "transform-pick-a-default", "prompt": "AWS Transform wants a choice between Static IP and Dynamic IP for the replication servers. Reply with the safer default.", "expected_tool": "answer_transform"}
+{"id": "remediate-stalled-replication", "prompt": "Eight servers have been failing to connect to the replication server for an hour. Work out why and fix it.", "expected_tool": "diagnose_and_remediate"}
+{"id": "remediate-unknown-failure", "prompt": "A step failed with an error nobody has seen before. Diagnose it and apply a fix if there is one.", "expected_tool": "diagnose_and_remediate"}
+{"id": "remediate-after-reading-state", "prompt": "I have already read the replication state and it is clearly broken. Now do something about it.", "expected_tool": "diagnose_and_remediate"}
+{"id": "ask-urls", "prompt": "I do not know which URLs prove these applications are healthy. Get that from the engineer.", "expected_tool": "ask_engineer"}
+{"id": "ask-login-reference", "prompt": "Two of the applications need a login before they can be probed. Obtain the Secrets Manager reference.", "expected_tool": "ask_engineer"}
+{"id": "ask-expected-response", "prompt": "Find out from the person running this what a healthy response for the catalog service looks like.", "expected_tool": "ask_engineer"}
+{"id": "escalate-needs-admin", "prompt": "MGN cannot be initialized without an account administrator and nothing I can call changes that.", "expected_tool": "escalate"}
+{"id": "escalate-exhausted", "prompt": "I have retried the remediation four times, the state has not changed, and I am out of options.", "expected_tool": "escalate"}
+{"id": "escalate-outside-scope", "prompt": "The request is to modernize a workload AWS Transform explicitly does not support.", "expected_tool": "escalate"}
+{"id": "inflight-scheduled-wakeup", "prompt": "You have just been woken up by the scheduler. Nobody told you which wave to work on.", "expected_tool": "waves_in_flight"}
+{"id": "inflight-what-is-running", "prompt": "Which migration waves are still running right now?", "expected_tool": "waves_in_flight"}
+{"id": "inflight-before-picking-a-wave", "prompt": "Before you touch anything, find out whether there is any wave left to resume at all.", "expected_tool": "waves_in_flight"}

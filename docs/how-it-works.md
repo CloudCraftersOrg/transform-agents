@@ -84,9 +84,14 @@ If the copy itself fails (e.g. a stalled agent), **Remediation** gets a chance t
 can't, the wave **escalates**.
 
 ### 4. Test
-**Validation QA** decides *what* to test based on how critical the app is, runs those checks, and
-looks at the differences between the old and new system's responses (API and schema diffs). It then
-issues a verdict:
+The agent cannot know what "working" means for your applications, so **it asks you first** — before
+anything moves. You give it a URL per application, what a healthy response looks like, and, for
+anything behind a login, a *reference* to a Secrets Manager entry. Never the password itself: the
+agent's decision log is stored and displayed, and a credential must not end up there.
+
+It then probes those applications **twice**: once before the migration, as a baseline, and once
+after. **Validation QA** judges the difference — an app that answered 200 and now answers 502, or
+whose response changed — and issues a verdict:
 
 - **Green** → move on.
 - **Red** → **rollback** immediately.
@@ -94,10 +99,15 @@ issues a verdict:
 If the model's answer is unreadable or ambiguous, the verdict defaults to **red**. A false "green"
 (saying a broken migration is fine) is the worst possible outcome, so the system leans the safe way.
 
+**If there is no baseline, there is no verdict.** A verdict computed from nothing comes back green,
+which would approve a cutover that was never tested — so the wave stops and asks instead.
+
 ### 5. Cutover
-The Orchestrator first asks the **policy engine**: is a cutover allowed right now? (Is the projected
-cost within budget? Is this a blackout window? Is this server in scope?) If not allowed, the wave
-**escalates**.
+Two things must be true. The **policy engine** has to allow it (projected cost within budget, not a
+blackout window, server in scope), and the wave must **already have a green verdict judged on a real
+comparison**. Both are re-checked by the component that performs the cutover, not by the one that
+asks for it — so an agent that skipped the test cannot reach the cutover by simply not mentioning
+it. If either fails, the wave **escalates**.
 
 If allowed, the **step dispatcher** flips the DNS records to point at the migrated servers (with a
 low TTL so the change is fast and reversible) and tells MGN to cut over. **The dispatcher re-runs

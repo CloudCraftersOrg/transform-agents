@@ -101,5 +101,7 @@ class BedrockModel:
 
 
 def strip_code_fence(text: str) -> str:
-    m = re.match(r"^```[a-zA-Z0-9]*\s*(.*?)\s*```$", text.strip(), re.DOTALL)
+    """First fenced block's body, or the text itself when there is no fence. Conversational models
+    put prose before the fence, so matching the whole string is not enough."""
+    m = re.search(r"```[a-zA-Z0-9]*[ \t]*\r?\n(.*?)```", text, re.DOTALL)
     return m.group(1).strip() if m else text.strip()

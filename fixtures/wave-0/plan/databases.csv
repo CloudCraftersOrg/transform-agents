@@ -1,0 +1,4 @@
+app_id,app_name,migration_strategy
+import_0b6b01c5-d120-5bce-8c8f-d8a57805bc35:MSSQLSERVER,MSSQLSERVER,rehost
+import_0b6b01c5-d120-5bce-8c8f-d8a57805bc35:SQLServerReportingServices,SSRS,rehost
+import_e0b56d26-039f-508a-af2f-774aba6ec4f8:XE,XE,rehost

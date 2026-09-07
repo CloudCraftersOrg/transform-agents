@@ -22,7 +22,9 @@ TOOLS = [
     "write_runbook",
 ]
 
-Apply = Callable[[str], dict]
+# (action, target) -> result. The target comes from the wave - which source server, which
+# instance - never from the model, which only chooses among the allow-listed action names.
+Apply = Callable[[str, dict], dict]
 
 
 @dataclass
@@ -35,8 +37,10 @@ class Remediation:
     notes: list[str] = field(default_factory=list)
 
 
-def _noop_apply(_action: str) -> dict:
-    return {"resolved": False, "detail": "no executor wired yet (Sprint 2)"}
+def _noop_apply(_action: str, _target: dict) -> dict:
+    """The default when nothing is wired. It reports honestly rather than claiming success -
+    a remediation loop that always answers "done" is worse than one that cannot act."""
+    return {"resolved": False, "detail": "no executor wired"}
 
 
 def remediate(
@@ -47,6 +51,7 @@ def remediate(
     apply_action: Apply = _noop_apply,
     kb: InMemoryRunbookKB | None = None,
     max_retries: int = 3,
+    target: dict | None = None,
 ) -> Remediation:
     notes: list[str] = []
     known = kb.query(failure) if kb is not None else []
@@ -55,7 +60,7 @@ def remediate(
     for i, rb in enumerate(known, start=1):
         if rb.action not in allowed_actions:
             continue
-        result = apply_action(rb.action)
+        result = apply_action(rb.action, target or {})
         if result.get("resolved"):
             return Remediation(True, rb.action, i, from_runbook=True, notes=notes)
         notes.append(f"known runbook {i}: {rb.action} did not resolve it")
@@ -77,7 +82,7 @@ def remediate(
         if action not in allowed_actions:  # allow-list is enforced in code, not in the prompt
             notes.append(f"attempt {attempt}: {action!r} is outside the allow-list")
             continue
-        result = apply_action(action)
+        result = apply_action(action, target or {})
         if result.get("resolved"):
             if kb is not None:
                 kb.write(Runbook(failure=failure, action=action))
@@ -100,6 +105,7 @@ def build_remediation(
             apply_action=apply_action,
             kb=kb,
             max_retries=p.get("max_retries", 3),
+            target=p.get("target") or {},
         )
 
     return delegate_remediation

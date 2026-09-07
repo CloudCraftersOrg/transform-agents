@@ -1,0 +1,49 @@
+{
+  "case_id": "wave-0",
+  "source_ref": "transform-migration-plan/Wave 0 (mgn_import + enriched_inventory + applications, 2026-09-02)",
+  "budget": {
+    "ceiling_monthly_usd": 259,
+    "basis": "migration_plan_on_demand_wave_0",
+    "pricing_model": "on_demand",
+    "max_variance_pct": 20
+  },
+  "constraints": [
+    {
+      "id": "c1",
+      "subject": "*",
+      "predicate": "sizing_basis",
+      "value": "peak_with_headroom",
+      "source": "enriched_inventory reports peak CPU and peak memory per server; 8 of 12 peak at 94-100% CPU, so average-based sizing is not defensible"
+    },
+    {
+      "id": "c2",
+      "subject": "*",
+      "predicate": "min_ram_gib",
+      "value": 2,
+      "source": "enriched_inventory: every server reports >= 1904 MiB (1.86 GiB) of system memory; the plan assigns t3a.nano (0.5 GiB) to 5 servers and t3a.micro (1 GiB) to 2"
+    },
+    {
+      "id": "c3",
+      "subject": "*",
+      "predicate": "min_vcpu",
+      "value": 2,
+      "source": "enriched_inventory: metadata:total_cpu_cores = 2 on all 12 servers; the plan assigns t2.small and m7a.medium, both 1 vCPU"
+    },
+    {
+      "id": "c4",
+      "subject": "EC2AMAZ-HVB61P6.WORKGROUP",
+      "predicate": "out_of_scope",
+      "value": "unidentified",
+      "source": "enriched_inventory: 100% average CPU with environment=unclassified and no application identified - workload unknown"
+    }
+  ],
+  "scope": { "excluded": [] },
+  "steps": ["precheck", "interpret", "replicate", "test", "cutover", "parity", "finops"],
+  "feature_flags": { "lza_enabled": false },
+  "allowed_actions": [
+    "restart_replication_agent",
+    "resync_volume",
+    "increase_replication_timeout",
+    "reinstall_mgn_agent"
+  ]
+}

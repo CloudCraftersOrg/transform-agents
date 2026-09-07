@@ -80,23 +80,37 @@ _CONTAINER_COMPUTE = ("aws_ecs_service", "aws_apprunner_service", "aws_ecs_task_
 _IMAGE_SOURCE = ("aws_ecr_repository", "image")
 
 
+def _as_path(source: str):
+    """`source` is either a path or the HCL itself. Only probe the filesystem when it could be a
+    path: pathlib lets ENAMETOOLONG escape from is_dir()/is_file() on Linux, so handing it a
+    multi-KB document raises OSError instead of returning False (Windows hides this)."""
+    from pathlib import Path
+
+    if len(source) > 255 or "\n" in source or "\r" in source:
+        return None
+    try:
+        return Path(source)
+    except (ValueError, OSError):
+        return None
+
+
 def validate_iac(source: str) -> ValidationOutcome:
     """Oracle for the Interpreter's modernization IaC. If the `terraform` binary is on PATH and
     `source` is a directory, run `terraform validate`; otherwise do an offline structural check of
     the HCL text (parses, declares a container compute target, references an image)."""
     import shutil
     import subprocess
-    from pathlib import Path
 
+    path = _as_path(source)
     terraform = shutil.which("terraform")
-    if terraform is not None and Path(source).is_dir():
+    if terraform is not None and path is not None and path.is_dir():
         p = subprocess.run(
             [terraform, "validate", "-no-color"],
             cwd=source, capture_output=True, text=True, check=False, shell=False,
         )
         return ValidationOutcome(p.returncode == 0, None if p.returncode == 0 else p.stderr.strip())
 
-    text = Path(source).read_text(encoding="utf-8") if Path(source).is_file() else source
+    text = path.read_text(encoding="utf-8") if path is not None and path.is_file() else source
     try:
         import hcl2
 

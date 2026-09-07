@@ -8,7 +8,7 @@ ALLOWED = ["restart_replication_agent", "resync_volume"]
 def test_resolves_on_first_valid_action():
     applied: list[str] = []
 
-    def apply_action(a):
+    def apply_action(a, target):
         applied.append(a)
         return {"resolved": True}
 
@@ -22,7 +22,7 @@ def test_resolves_on_first_valid_action():
 def test_action_outside_whitelist_is_refused():
     r = remediate(
         FakeModel(['{"action":"delete_account","rationale":"nuke"}']),
-        failure="x", allowed_actions=ALLOWED, apply_action=lambda a: {"resolved": True}, max_retries=2,
+        failure="x", allowed_actions=ALLOWED, apply_action=lambda a, t: {"resolved": True}, max_retries=2,
     )
     assert not r.resolved and r.attempts == 2 and "allow-list" in r.notes[0]
 
@@ -31,7 +31,7 @@ def test_retries_then_gives_up():
     r = remediate(
         FakeModel(['{"action":"resync_volume","rationale":"y"}']),
         failure="x", allowed_actions=ALLOWED,
-        apply_action=lambda a: {"resolved": False, "detail": "still bad"}, max_retries=3,
+        apply_action=lambda a, t: {"resolved": False, "detail": "still bad"}, max_retries=3,
     )
     assert not r.resolved and r.attempts == 3 and len(r.notes) == 3
 
@@ -44,7 +44,7 @@ def test_illegible_response_counts_as_attempt():
 def test_learning_loop_second_occurrence_skips_the_model():
     kb = InMemoryRunbookKB()
 
-    def apply_action(a):
+    def apply_action(a, target):
         return {"resolved": a == "resync_volume"}
 
     first = remediate(
